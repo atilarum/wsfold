@@ -59,7 +59,7 @@ func TestRenderWorkspaceMatchesGoldenAndIsDeterministic(t *testing.T) {
 	}
 }
 
-func TestRenderWorkspaceCustomProjectsDirKeepsSubdirExcludes(t *testing.T) {
+func TestRenderWorkspaceCustomProjectsDirDoesNotCreateExcludes(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
@@ -83,8 +83,10 @@ func TestRenderWorkspaceCustomProjectsDirKeepsSubdirExcludes(t *testing.T) {
 	if !strings.Contains(string(data), `"_ctx/service"`) {
 		t.Fatalf("expected trusted root under custom projects dir:\n%s", string(data))
 	}
-	if !strings.Contains(string(data), `"_ctx": true`) {
-		t.Fatalf("expected custom projects dir exclude:\n%s", string(data))
+	for _, unexpected := range []string{`"files.exclude"`, `"files.watcherExclude"`, `"search.exclude"`, `"_ctx": true`} {
+		if strings.Contains(string(data), unexpected) {
+			t.Fatalf("workspace should not create VS Code excludes %q:\n%s", unexpected, string(data))
+		}
 	}
 }
 
@@ -168,19 +170,21 @@ func TestRenderWorkspaceMergesExistingWorkspaceState(t *testing.T) {
 	}
 
 	filesExclude, ok := settings["files.exclude"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected files.exclude object, got %#v", settings["files.exclude"])
+	if !ok || filesExclude["custom"] != true || filesExclude["old-service"] != true {
+		t.Fatalf("expected existing files.exclude object to survive untouched, got %#v", settings["files.exclude"])
 	}
-	if _, ok := filesExclude["old-service"]; ok {
-		t.Fatalf("expected stale managed exclude to be removed, got %#v", filesExclude)
+	if _, ok := filesExclude["service"]; ok {
+		t.Fatalf("expected current trusted repo not to be added to files.exclude, got %#v", filesExclude)
 	}
-	if filesExclude["custom"] != true || filesExclude["service"] != true {
-		t.Fatalf("expected custom and managed excludes to coexist, got %#v", filesExclude)
+	if settings["files.watcherExclude"] != false {
+		t.Fatalf("expected invalid watcher setting to survive untouched, got %#v", settings["files.watcherExclude"])
 	}
-
-	watcherExclude, ok := settings["files.watcherExclude"].(map[string]any)
-	if !ok || watcherExclude["service"] != true {
-		t.Fatalf("expected invalid watcher setting to be replaced with managed object, got %#v", settings["files.watcherExclude"])
+	searchExclude, ok := settings["search.exclude"].(map[string]any)
+	if !ok || searchExclude["custom"] != true || searchExclude["old-service"] != true {
+		t.Fatalf("expected existing search.exclude object to survive untouched, got %#v", settings["search.exclude"])
+	}
+	if _, ok := searchExclude["service"]; ok {
+		t.Fatalf("expected current trusted repo not to be added to search.exclude, got %#v", searchExclude)
 	}
 
 	folders, ok := decoded["folders"].([]any)

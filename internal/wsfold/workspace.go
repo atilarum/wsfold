@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 
 	"github.com/tailscale/hujson"
 )
@@ -13,15 +12,10 @@ import (
 const (
 	workspaceTemplate         = "{\n  \"folders\": [],\n  \"settings\": {}\n}\n"
 	topLevelMemberIndent      = "\n  "
-	topLevelClosingIndent     = "\n"
 	arrayElementIndent        = "\n    "
 	arrayClosingIndent        = "\n  "
 	nestedObjectMemberIndent  = "\n      "
 	nestedObjectClosingIndent = "\n    "
-	settingsMemberIndent      = "\n    "
-	settingsClosingIndent     = "\n  "
-	excludeMemberIndent       = "\n      "
-	excludeClosingIndent      = "\n    "
 	valueLeadingSpace         = " "
 )
 
@@ -91,14 +85,6 @@ func mergeWorkspaceValue(value *hujson.Value, previous Manifest, manifest Manife
 	foldersArray := ensureTopLevelArrayMember(root, "folders")
 	mergeFoldersArray(foldersArray, previousFolders, currentFolders)
 
-	settingsObject := ensureTopLevelObjectMember(root, "settings")
-	previousExcludes := workspaceExcludes(previous, projectsDirName)
-	currentExcludes := workspaceExcludes(manifest, projectsDirName)
-	for _, key := range []string{"files.exclude", "files.watcherExclude", "search.exclude"} {
-		excludeObject := ensureNestedObjectMember(settingsObject, key, settingsMemberIndent, excludeClosingIndent)
-		mergeExcludeObject(excludeObject, previousExcludes, currentExcludes)
-	}
-
 	return nil
 }
 
@@ -139,31 +125,6 @@ func trustedMountPath(primaryRoot string, projectsDirName string, repoName strin
 		return filepath.Join(primaryRoot, repoName)
 	}
 	return filepath.Join(primaryRoot, projectsDirName, repoName)
-}
-
-func workspaceExcludes(manifest Manifest, projectsDirName string) map[string]bool {
-	excludes := map[string]bool{}
-	if projectsDirName == "." {
-		names := map[string]struct{}{}
-		for _, entry := range manifest.Trusted {
-			if entry.MountPath == "" {
-				continue
-			}
-			names[filepath.Base(entry.MountPath)] = struct{}{}
-		}
-		keys := make([]string, 0, len(names))
-		for name := range names {
-			keys = append(keys, name)
-		}
-		sort.Strings(keys)
-		for _, name := range keys {
-			excludes[name] = true
-		}
-		return excludes
-	}
-
-	excludes[projectsDirName] = true
-	return excludes
 }
 
 func workspaceRelativePath(primaryRoot string, targetPath string) (string, error) {
@@ -229,48 +190,6 @@ func mergeFoldersArray(arr *hujson.Array, previous []workspaceFolder, current []
 	setArrayTrailingComma(arr, hadTrailingComma)
 }
 
-func mergeExcludeObject(obj *hujson.Object, previous map[string]bool, current map[string]bool) {
-	hadTrailingComma := objectHasTrailingComma(obj)
-	used := map[string]struct{}{}
-	result := make([]hujson.ObjectMember, 0, len(obj.Members)+len(current))
-
-	for _, member := range obj.Members {
-		name, ok := memberName(member)
-		if !ok {
-			result = append(result, member)
-			continue
-		}
-
-		_, wasManaged := previous[name]
-		_, isManaged := current[name]
-		if wasManaged || isManaged {
-			if !isManaged {
-				continue
-			}
-			if _, seen := used[name]; seen {
-				continue
-			}
-			member.Value.Value = hujson.Bool(true)
-			result = append(result, member)
-			used[name] = struct{}{}
-			continue
-		}
-
-		result = append(result, member)
-	}
-
-	keys := sortedTrueKeys(current)
-	for _, key := range keys {
-		if _, ok := used[key]; ok {
-			continue
-		}
-		result = append(result, newBoolMember(key, true, excludeMemberIndent))
-	}
-
-	obj.Members = result
-	setObjectTrailingComma(obj, hadTrailingComma)
-}
-
 func ensureTopLevelArrayMember(root *hujson.Object, name string) *hujson.Array {
 	member := ensureObjectMember(root, name, topLevelMemberIndent, newArray(arrayClosingIndent))
 	array, ok := member.Value.Value.(*hujson.Array)
@@ -289,46 +208,6 @@ func ensureTopLevelArrayMember(root *hujson.Object, name string) *hujson.Array {
 		AfterExtra:  after,
 	}
 	return member.Value.Value.(*hujson.Array)
-}
-
-func ensureTopLevelObjectMember(root *hujson.Object, name string) *hujson.Object {
-	member := ensureObjectMember(root, name, topLevelMemberIndent, newObject(settingsClosingIndent))
-	object, ok := member.Value.Value.(*hujson.Object)
-	if ok {
-		if len(object.Members) == 0 && object.AfterExtra == nil {
-			object.AfterExtra = hujson.Extra(settingsClosingIndent)
-		}
-		return object
-	}
-
-	before := copyExtra(member.Value.BeforeExtra)
-	after := copyExtra(member.Value.AfterExtra)
-	member.Value = hujson.Value{
-		BeforeExtra: preserveValueBeforeExtra(before),
-		Value:       newObject(settingsClosingIndent),
-		AfterExtra:  after,
-	}
-	return member.Value.Value.(*hujson.Object)
-}
-
-func ensureNestedObjectMember(obj *hujson.Object, name string, memberIndent string, closingIndent string) *hujson.Object {
-	member := ensureObjectMember(obj, name, memberIndent, newObject(closingIndent))
-	nested, ok := member.Value.Value.(*hujson.Object)
-	if ok {
-		if len(nested.Members) == 0 && nested.AfterExtra == nil {
-			nested.AfterExtra = hujson.Extra(closingIndent)
-		}
-		return nested
-	}
-
-	before := copyExtra(member.Value.BeforeExtra)
-	after := copyExtra(member.Value.AfterExtra)
-	member.Value = hujson.Value{
-		BeforeExtra: preserveValueBeforeExtra(before),
-		Value:       newObject(closingIndent),
-		AfterExtra:  after,
-	}
-	return member.Value.Value.(*hujson.Object)
 }
 
 func ensureObjectMember(obj *hujson.Object, name string, memberIndent string, value hujson.ValueTrimmed) *hujson.ObjectMember {
@@ -401,23 +280,6 @@ func newStringMember(name string, value string, memberIndent string) hujson.Obje
 			Value:       hujson.String(value),
 		},
 	}
-}
-
-func newBoolMember(name string, value bool, memberIndent string) hujson.ObjectMember {
-	return hujson.ObjectMember{
-		Name: hujson.Value{
-			BeforeExtra: hujson.Extra(memberIndent),
-			Value:       hujson.String(name),
-		},
-		Value: hujson.Value{
-			BeforeExtra: hujson.Extra(valueLeadingSpace),
-			Value:       hujson.Bool(value),
-		},
-	}
-}
-
-func newObject(closingIndent string) *hujson.Object {
-	return &hujson.Object{AfterExtra: hujson.Extra(closingIndent)}
 }
 
 func newArray(closingIndent string) *hujson.Array {
@@ -496,38 +358,6 @@ func setArrayTrailingComma(arr *hujson.Array, enabled bool) {
 		return
 	}
 	last.AfterExtra = nil
-}
-
-func objectHasTrailingComma(obj *hujson.Object) bool {
-	if len(obj.Members) == 0 {
-		return false
-	}
-	return obj.Members[len(obj.Members)-1].Value.AfterExtra != nil
-}
-
-func setObjectTrailingComma(obj *hujson.Object, enabled bool) {
-	if len(obj.Members) == 0 {
-		return
-	}
-	last := &obj.Members[len(obj.Members)-1].Value
-	if enabled {
-		if last.AfterExtra == nil {
-			last.AfterExtra = hujson.Extra{}
-		}
-		return
-	}
-	last.AfterExtra = nil
-}
-
-func sortedTrueKeys(values map[string]bool) []string {
-	keys := make([]string, 0, len(values))
-	for key, enabled := range values {
-		if enabled {
-			keys = append(keys, key)
-		}
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func decodeWorkspaceJSON(data []byte) (map[string]any, error) {

@@ -13,15 +13,5 @@
       "path": "{{EXTERNAL_RELATIVE_PATH}}"
     }
   ],
-  "settings": {
-    "files.exclude": {
-      "service": true
-    },
-    "files.watcherExclude": {
-      "service": true
-    },
-    "search.exclude": {
-      "service": true
-    }
-  }
+  "settings": {}
 }
