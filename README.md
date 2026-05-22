@@ -142,7 +142,7 @@ Commands:
 
 `wsfold` maintains a `.code-workspace` file alongside the workspace root. `wsfold init` creates this file even before any repositories are attached, so the workspace can be opened in Visual Studio Code and compatible editors such as Cursor and Windsurf from the start as a multi-root project.
 
-Trusted repositories attached with `wsfold summon` are added to that `.code-workspace` file as additional roots. To avoid showing the same repository twice, `wsfold` excludes the trusted mount location from the main workspace tree while keeping it available on disk at its real filesystem path.
+Trusted repositories attached with `wsfold summon` are symlinked into the workspace and also added to that `.code-workspace` file as additional roots. `wsfold` does not hide the symlink location through generated Visual Studio Code exclude settings, and it does not manage editor settings as part of workspace composition.
 
 External repositories attached with `wsfold summon-external` are handled differently. They are added to the `.code-workspace` file as workspace roots, but are not symlinked into the trusted workspace tree.
 

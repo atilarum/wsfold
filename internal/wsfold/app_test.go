@@ -734,8 +734,8 @@ func TestEndToEndSmokeScenario(t *testing.T) {
 	if !strings.Contains(string(workspaceBytes), `"name": "`+filepath.Base(h.Workspace)+`"`) {
 		t.Fatalf("workspace should keep the primary root folder by workspace basename:\n%s", string(workspaceBytes))
 	}
-	if !strings.Contains(string(workspaceBytes), `"files.exclude":`) || strings.Contains(string(workspaceBytes), `"service": true`) {
-		t.Fatalf("workspace should drop trusted repo excludes after dismiss:\n%s", string(workspaceBytes))
+	if strings.Contains(string(workspaceBytes), `"path": "service"`) || strings.Contains(string(workspaceBytes), `"service": true`) {
+		t.Fatalf("workspace should drop trusted repo folder without creating trusted repo excludes after dismiss:\n%s", string(workspaceBytes))
 	}
 
 	manifest, err := loadManifest(h.Workspace)
@@ -897,8 +897,13 @@ func TestSummonCustomProjectsDirStillMountsUnderSubdir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read workspace file: %v", err)
 	}
-	if !strings.Contains(string(workspaceBytes), `"_ctx/service"`) || !strings.Contains(string(workspaceBytes), `"_ctx": true`) {
+	if !strings.Contains(string(workspaceBytes), `"_ctx/service"`) {
 		t.Fatalf("workspace should keep custom projects dir behavior:\n%s", string(workspaceBytes))
+	}
+	for _, unexpected := range []string{`"files.exclude"`, `"files.watcherExclude"`, `"search.exclude"`, `"_ctx": true`} {
+		if strings.Contains(string(workspaceBytes), unexpected) {
+			t.Fatalf("workspace should not create VS Code excludes %q:\n%s", unexpected, string(workspaceBytes))
+		}
 	}
 }
 
@@ -950,13 +955,16 @@ func TestSummonPreservesManualWorkspaceSettings(t *testing.T) {
 		`"editor.tabSize": 2`,
 		`"launch": {`,
 		`"path": "manual"`,
-		`"service": true`,
+		`"path": "service"`,
 		`// keep summon folder comment`,
 		`// keep summon exclude comment`,
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("expected workspace to preserve merged content %q:\n%s", expected, text)
 		}
+	}
+	if strings.Contains(text, `"service": true`) {
+		t.Fatalf("expected summon not to add trusted repo VS Code excludes:\n%s", text)
 	}
 }
 
@@ -1005,10 +1013,10 @@ func TestDismissRemovesOnlyManagedWorkspaceEntries(t *testing.T) {
 		t.Fatalf("read workspace file: %v", err)
 	}
 	text := string(workspaceBytes)
-	if strings.Contains(text, `"path": "service"`) || strings.Contains(text, `"service": true`) {
-		t.Fatalf("expected dismiss to remove managed root and excludes:\n%s", text)
+	if strings.Contains(text, `"path": "service"`) {
+		t.Fatalf("expected dismiss to remove managed root:\n%s", text)
 	}
-	for _, expected := range []string{`"path": "manual"`, `"custom": true`, `"custom-watch": true`, `"custom-search": true`, `// keep dismiss folder comment`, `// keep dismiss exclude comment`} {
+	for _, expected := range []string{`"path": "manual"`, `"service": true`, `"custom": true`, `"custom-watch": true`, `"custom-search": true`, `// keep dismiss folder comment`, `// keep dismiss exclude comment`} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("expected dismiss to keep manual workspace content %q:\n%s", expected, text)
 		}
