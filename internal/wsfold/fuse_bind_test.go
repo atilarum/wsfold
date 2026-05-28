@@ -144,6 +144,23 @@ func TestFuseBindDismissClassifiesRecoveryFailures(t *testing.T) {
 
 	activeMountInfoFunc = func() (map[string]mountPointInfo, error) {
 		return map[string]mountPointInfo{
+			filepath.Clean(entry.MountPath): {Path: entry.MountPath, FSType: "fuse.sshfs", Source: "sshfs"},
+		}, nil
+	}
+	var calls []string
+	runner := Runner{ExecCommand: func(name string, dir string, env []string, args ...string) (string, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return "", nil
+	}}
+	if err := dismissFuseBind(runner, entry); err == nil || !strings.Contains(err.Error(), "does not look like the expected bindfs") {
+		t.Fatalf("expected unrelated FUSE mount diagnostic, got %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("unrelated FUSE mount should not be unmounted, got calls: %v", calls)
+	}
+
+	activeMountInfoFunc = func() (map[string]mountPointInfo, error) {
+		return map[string]mountPointInfo{
 			filepath.Clean(entry.MountPath): {Path: entry.MountPath, FSType: "fuse.bindfs", Source: "bindfs"},
 		}, nil
 	}

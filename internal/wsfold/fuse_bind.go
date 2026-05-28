@@ -127,7 +127,7 @@ func dismissFuseBind(runner Runner, entry Entry) error {
 func isExpectedFuseBindMount(info mountPointInfo) bool {
 	fsType := strings.ToLower(info.FSType)
 	source := strings.ToLower(info.Source)
-	return strings.Contains(fsType, "fuse") || strings.Contains(fsType, "bindfs") || strings.Contains(source, "bindfs")
+	return strings.Contains(fsType, "bindfs") || strings.Contains(source, "bindfs")
 }
 
 func cleanupFuseBindTarget(path string) {
