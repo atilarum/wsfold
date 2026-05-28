@@ -43,7 +43,7 @@ brew upgrade wsfold
 ### Install from GitHub Releases
 
 If Homebrew is not available, download the archive for your platform from the
-[GitHub Releases page](https://github.com/wsfold/wsfold/releases), extract the
+[GitHub Releases page](https://github.com/atilarum/wsfold/releases), extract the
 `wsfold` binary, and place it somewhere in your `PATH`.
 
 ## Environment Setup

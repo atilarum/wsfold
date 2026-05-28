@@ -1,4 +1,4 @@
-module github.com/openclaw/wsfold
+module github.com/atilarum/wsfold
 
 go 1.25.0
 

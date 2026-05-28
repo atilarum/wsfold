@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openclaw/wsfold/internal/testutil"
+	"github.com/atilarum/wsfold/internal/testutil"
 )
 
 func TestManifestRoundTripMatchesGolden(t *testing.T) {

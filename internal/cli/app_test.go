@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openclaw/wsfold/internal/testutil"
-	"github.com/openclaw/wsfold/internal/wsfold"
+	"github.com/atilarum/wsfold/internal/testutil"
+	"github.com/atilarum/wsfold/internal/wsfold"
 )
 
 func TestRunHelp(t *testing.T) {
