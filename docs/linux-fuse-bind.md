@@ -18,6 +18,13 @@ Supported values for `WSFOLD_MOUNT_BACKEND` are:
 
 Install FUSE3, `bindfs`, and `fusermount3` with your distribution package manager. The host must expose a usable `/dev/fuse` device to the user running WSFold.
 
+On Debian or Ubuntu:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y fuse3 bindfs
+```
+
 WSFold invokes:
 
 ```bash

@@ -65,6 +65,13 @@ export WSFOLD_MOUNT_BACKEND="symlink"
 `WSFOLD_PROJECTS_DIR` is optional. It controls where trusted repositories are mounted inside the workspace. The default is `.` which means "mount directly into the workspace root". Any other non-empty value is treated as the name of the parent directory used for trusted mounts inside the workspace.
 `WSFOLD_MOUNT_BACKEND` is optional. The default is `symlink`. Linux hosts with FUSE3, `bindfs`, `fusermount3`, and a usable `/dev/fuse` can set `WSFOLD_MOUNT_BACKEND=linux-fuse-bind` to attach trusted repositories with `bindfs --no-allow-other` and detach them with `fusermount3 -u`. Linux devcontainers that explicitly grant `CAP_SYS_ADMIN` can set `WSFOLD_MOUNT_BACKEND=linux-native-bind` to attach trusted repositories with `sudo mount --bind` and detach them with `sudo umount`.
 
+On Debian or Ubuntu, install the Linux FUSE bind prerequisites with:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y fuse3 bindfs
+```
+
 To use trusted remote discovery and on-demand cloning, install the GitHub CLI and authenticate with it:
 
 ```bash
