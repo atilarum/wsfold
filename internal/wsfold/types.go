@@ -7,12 +7,18 @@ import (
 
 type TrustClass string
 type CompletionSource string
+type AttachmentBackend string
 
 const (
 	TrustClassTrusted      TrustClass       = "trusted"
 	TrustClassExternal     TrustClass       = "external"
 	CompletionSourceLocal  CompletionSource = "local"
 	CompletionSourceRemote CompletionSource = "remote"
+
+	AttachmentBackendSymlink         AttachmentBackend = "symlink"
+	AttachmentBackendLinuxNativeBind AttachmentBackend = "linux-native-bind"
+	AttachmentBackendLinuxFuseBind   AttachmentBackend = "linux-fuse-bind"
+	AttachmentBackendMacOSFuseBind   AttachmentBackend = "macos-fuse-bind"
 )
 
 type Repo struct {
@@ -43,10 +49,11 @@ func (r Repo) DisplayRef() string {
 }
 
 type Entry struct {
-	RepoRef      string     `yaml:"repo_ref" json:"repo_ref"`
-	CheckoutPath string     `yaml:"checkout_path" json:"checkout_path"`
-	TrustClass   TrustClass `yaml:"trust_class" json:"trust_class"`
-	MountPath    string     `yaml:"mount_path,omitempty" json:"mount_path,omitempty"`
+	RepoRef      string            `yaml:"repo_ref" json:"repo_ref"`
+	CheckoutPath string            `yaml:"checkout_path" json:"checkout_path"`
+	TrustClass   TrustClass        `yaml:"trust_class" json:"trust_class"`
+	Backend      AttachmentBackend `yaml:"backend,omitempty" json:"backend,omitempty"`
+	MountPath    string            `yaml:"mount_path,omitempty" json:"mount_path,omitempty"`
 }
 
 func (e Entry) Key() string {

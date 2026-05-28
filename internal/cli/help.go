@@ -82,6 +82,12 @@ var envHelpEntries = []envHelpEntry{
 		Default:     ".",
 		Description: "trusted mount directory name; use . for the workspace root",
 	},
+	{
+		Name:        "WSFOLD_MOUNT_BACKEND",
+		Required:    false,
+		Default:     "symlink",
+		Description: "trusted attach backend; supported values: symlink, linux-native-bind",
+	},
 }
 
 func writeHelp(w io.Writer) error {
@@ -107,6 +113,9 @@ func helpText() string {
 	b.WriteString("If no repository argument is provided, the command opens an interactive picker with flexible search.\n\n")
 	b.WriteString("You can refer to a repository by its local folder name, GitHub owner/name, or owner/name/branch for a local worktree.\n\n")
 	b.WriteString("`wsfold worktree` is trusted-only and creates environment-local worktrees under WSFOLD_TRUSTED_DIR.\n\n")
+	b.WriteString("Trusted attachments use the symlink backend by default. In Linux devcontainers, set\n")
+	b.WriteString("WSFOLD_MOUNT_BACKEND=linux-native-bind to attach trusted repositories with sudo mount --bind;\n")
+	b.WriteString("the container must include CAP_SYS_ADMIN and usable non-interactive sudo.\n\n")
 
 	writeSection(&b, "Commands")
 	for _, entry := range commandHelpEntries {

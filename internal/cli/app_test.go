@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openclaw/wsfold/internal/testutil"
-	"github.com/openclaw/wsfold/internal/wsfold"
+	"github.com/atilarum/wsfold/internal/testutil"
+	"github.com/atilarum/wsfold/internal/wsfold"
 )
 
 func TestRunHelp(t *testing.T) {
@@ -53,11 +53,17 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(output, "`wsfold worktree` is trusted-only and creates environment-local worktrees under WSFOLD_TRUSTED_DIR.") {
 		t.Fatalf("help output did not contain worktree command note: %q", output)
 	}
+	if !strings.Contains(output, "WSFOLD_MOUNT_BACKEND=linux-native-bind") || !strings.Contains(output, "sudo mount --bind") || !strings.Contains(output, "CAP_SYS_ADMIN") {
+		t.Fatalf("help output did not describe linux-native-bind backend selection: %q", output)
+	}
 	if !strings.Contains(output, "Flags:") || !strings.Contains(output, "-h, --help") || !strings.Contains(output, "-v, --version") {
 		t.Fatalf("help output did not contain flags section: %q", output)
 	}
 	if !strings.Contains(output, "Environment:") || !strings.Contains(output, "WSFOLD_PROJECTS_DIR") || !strings.Contains(output, "default: .") {
 		t.Fatalf("help output did not contain environment section: %q", output)
+	}
+	if !strings.Contains(output, "WSFOLD_MOUNT_BACKEND") || !strings.Contains(output, "default: symlink") || !strings.Contains(output, "linux-native-bind") {
+		t.Fatalf("help output did not contain mount backend environment entry: %q", output)
 	}
 	if !strings.Contains(output, "Examples:") || !strings.Contains(output, `eval "$(wsfold completion zsh)"`) {
 		t.Fatalf("help output did not contain examples section: %q", output)

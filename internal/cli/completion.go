@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/openclaw/wsfold/internal/wsfold"
+	"github.com/atilarum/wsfold/internal/wsfold"
 )
 
 const zshCompletionScript = `

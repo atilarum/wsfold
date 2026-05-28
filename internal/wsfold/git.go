@@ -27,6 +27,10 @@ func (r Runner) GitHubStreaming(dir string, stdout io.Writer, stderr io.Writer, 
 	return r.runStreaming("gh", dir, stdout, stderr, args...)
 }
 
+func (r Runner) Command(dir string, name string, args ...string) (string, error) {
+	return r.run(name, dir, args...)
+}
+
 func (r Runner) HasCommand(name string) bool {
 	_, err := r.lookupPath(name)
 	return err == nil

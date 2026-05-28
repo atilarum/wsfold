@@ -43,7 +43,7 @@ brew upgrade wsfold
 ### Install from GitHub Releases
 
 If Homebrew is not available, download the archive for your platform from the
-[GitHub Releases page](https://github.com/wsfold/wsfold/releases), extract the
+[GitHub Releases page](https://github.com/atilarum/wsfold/releases), extract the
 `wsfold` binary, and place it somewhere in your `PATH`.
 
 ## Environment Setup
@@ -55,12 +55,15 @@ export WSFOLD_TRUSTED_DIR="$HOME/repo/_prj"
 export WSFOLD_EXTERNAL_DIR="$HOME/repo/_ext"
 export WSFOLD_TRUSTED_GITHUB_ORGS="org_name,org_name2"
 export WSFOLD_PROJECTS_DIR="."
+# Optional. Defaults to symlink. Linux devcontainers may opt into linux-native-bind.
+export WSFOLD_MOUNT_BACKEND="symlink"
 ```
 
 `WSFOLD_TRUSTED_DIR` is required. It should point to an existing local directory that contains repositories you are comfortable treating as trusted, including opening them in your editor and running LLM agents against them.
 `WSFOLD_EXTERNAL_DIR` is required. It should point to an existing local directory that contains repositories you may want visible in the workspace, but do not want to treat as trusted or link directly into the trusted workspace tree.
 `WSFOLD_TRUSTED_GITHUB_ORGS` is an optional comma-separated list of GitHub organization names. It is strongly recommended if your work involves repositories from one or more GitHub organizations you trust.
 `WSFOLD_PROJECTS_DIR` is optional. It controls where trusted repositories are mounted inside the workspace. The default is `.` which means "mount directly into the workspace root". Any other non-empty value is treated as the name of the parent directory used for trusted mounts inside the workspace.
+`WSFOLD_MOUNT_BACKEND` is optional. The default is `symlink`. In Linux devcontainers that explicitly grant `CAP_SYS_ADMIN`, you can set `WSFOLD_MOUNT_BACKEND=linux-native-bind` to attach trusted repositories with `sudo mount --bind` and detach them with `sudo umount`.
 
 To use trusted remote discovery and on-demand cloning, install the GitHub CLI and authenticate with it:
 
@@ -143,6 +146,8 @@ Commands:
 `wsfold` maintains a `.code-workspace` file alongside the workspace root. `wsfold init` creates this file even before any repositories are attached, so the workspace can be opened in Visual Studio Code and compatible editors such as Cursor and Windsurf from the start as a multi-root project.
 
 Trusted repositories attached with `wsfold summon` are symlinked into the workspace and also added to that `.code-workspace` file as additional roots. `wsfold` does not hide the symlink location through generated Visual Studio Code exclude settings, and it does not manage editor settings as part of workspace composition.
+
+Linux devcontainers can opt into native bind mounts instead of symlinks by setting `WSFOLD_MOUNT_BACKEND=linux-native-bind` and starting the container with `CAP_SYS_ADMIN`, for example Docker `--cap-add=SYS_ADMIN` or Compose `cap_add: [SYS_ADMIN]`. This backend uses the kernel mount path through `sudo mount --bind` and `sudo umount`; it does not require `/dev/fuse`, `bindfs`, or `fuse3`, and the documentation intentionally does not recommend `--privileged`. See [docs/devcontainer-native-bind.md](docs/devcontainer-native-bind.md) for setup, security notes, troubleshooting, and manual backout guidance.
 
 External repositories attached with `wsfold summon-external` are handled differently. They are added to the `.code-workspace` file as workspace roots, but are not symlinked into the trusted workspace tree.
 

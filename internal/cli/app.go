@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/openclaw/wsfold/internal/buildinfo"
-	"github.com/openclaw/wsfold/internal/wsfold"
+	"github.com/atilarum/wsfold/internal/buildinfo"
+	"github.com/atilarum/wsfold/internal/wsfold"
 )
 
 const (

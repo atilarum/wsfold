@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openclaw/wsfold/internal/testutil"
+	"github.com/atilarum/wsfold/internal/testutil"
 )
 
 func TestSummonExistingTrustedRepo(t *testing.T) {
@@ -50,6 +50,9 @@ func TestSummonExistingTrustedRepo(t *testing.T) {
 	if strings.Count(string(manifestBytes), "repo_ref: acme/service") != 1 {
 		t.Fatalf("expected one trusted manifest entry, got:\n%s", string(manifestBytes))
 	}
+	if !strings.Contains(string(manifestBytes), "backend: symlink") {
+		t.Fatalf("expected symlink backend in manifest, got:\n%s", string(manifestBytes))
+	}
 
 	workspaceBytes, err := os.ReadFile(workspacePath(h.Workspace))
 	if err != nil {
@@ -71,6 +74,118 @@ func TestSummonExistingTrustedRepo(t *testing.T) {
 	after := string(manifestBytes) + string(workspaceBytes)
 	if before != after {
 		t.Fatal("second summon should be idempotent")
+	}
+}
+
+func TestSummonRejectsUnsupportedMountBackend(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "linux-fuse-bind")
+	initWorkspace(t, h)
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	h.RunGit(repoPath, "remote", "add", "origin", "https://github.com/acme/service.git")
+
+	err := NewApp().Summon(h.Workspace, "service")
+	if err == nil || !strings.Contains(err.Error(), "not selectable yet") {
+		t.Fatalf("expected backend selection error, got %v", err)
+	}
+	manifest, loadErr := loadManifest(h.Workspace)
+	if loadErr != nil {
+		t.Fatalf("loadManifest returned error: %v", loadErr)
+	}
+	if len(manifest.Trusted) != 0 {
+		t.Fatalf("unsupported backend should not write manifest entry: %#v", manifest.Trusted)
+	}
+}
+
+func TestSummonLinuxNativeBindUsesMountBeforeManifestWrite(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "linux-native-bind")
+	initWorkspace(t, h)
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	h.RunGit(repoPath, "remote", "add", "origin", "https://github.com/acme/service.git")
+
+	var calls []string
+	oldPreflight := nativeBindPreflight
+	oldAttach := nativeBindAttach
+	nativeBindPreflight = func(_ Runner, _ Manifest, entry Entry) error {
+		calls = append(calls, "preflight:"+entry.MountPath)
+		return nil
+	}
+	nativeBindAttach = func(_ Runner, entry Entry) error {
+		calls = append(calls, "mount:"+entry.CheckoutPath+":"+entry.MountPath)
+		if _, err := os.Stat(manifestPath(h.Workspace)); err != nil {
+			calls = append(calls, "manifest-before-mount:missing")
+		} else {
+			calls = append(calls, "manifest-before-mount:present")
+		}
+		return os.Mkdir(entry.MountPath, 0o755)
+	}
+	t.Cleanup(func() {
+		nativeBindPreflight = oldPreflight
+		nativeBindAttach = oldAttach
+	})
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	var stdout bytes.Buffer
+	app.Stdout = &stdout
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("Summon returned error: %v", err)
+	}
+
+	manifest, err := loadManifest(h.Workspace)
+	if err != nil {
+		t.Fatalf("loadManifest returned error: %v", err)
+	}
+	if len(manifest.Trusted) != 1 || manifest.Trusted[0].Backend != AttachmentBackendLinuxNativeBind {
+		t.Fatalf("expected linux-native-bind manifest entry, got %#v", manifest.Trusted)
+	}
+	if !strings.Contains(stdout.String(), "linux-native-bind") || !strings.Contains(stdout.String(), "sudo umount") {
+		t.Fatalf("expected native bind success output with backout, got:\n%s", stdout.String())
+	}
+	if !containsString(calls, "manifest-before-mount:present") {
+		t.Fatalf("expected mount to occur before updated manifest write; calls: %v", calls)
+	}
+}
+
+func TestSummonLinuxNativeBindMountFailureLeavesManifestUnchanged(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "linux-native-bind")
+	initWorkspace(t, h)
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	h.RunGit(repoPath, "remote", "add", "origin", "https://github.com/acme/service.git")
+
+	oldPreflight := nativeBindPreflight
+	oldAttach := nativeBindAttach
+	nativeBindPreflight = func(Runner, Manifest, Entry) error { return nil }
+	nativeBindAttach = func(Runner, Entry) error { return os.ErrPermission }
+	t.Cleanup(func() {
+		nativeBindPreflight = oldPreflight
+		nativeBindAttach = oldAttach
+	})
+
+	err := NewApp().Summon(h.Workspace, "service")
+	if err == nil {
+		t.Fatal("expected native bind mount failure")
+	}
+	manifest, loadErr := loadManifest(h.Workspace)
+	if loadErr != nil {
+		t.Fatalf("loadManifest returned error: %v", loadErr)
+	}
+	if len(manifest.Trusted) != 0 {
+		t.Fatalf("failed native bind should not write manifest entry: %#v", manifest.Trusted)
+	}
+	if _, statErr := os.Stat(repoPath); statErr != nil {
+		t.Fatalf("source checkout should remain after mount failure: %v", statErr)
 	}
 }
 
@@ -446,6 +561,116 @@ func TestDismissTrustedAndExternalLifecycle(t *testing.T) {
 		t.Fatal("expected repeat dismiss to fail once repo is no longer attached")
 	} else if !strings.Contains(err.Error(), `repository "other/legacy-tool" is not part of the current workspace composition`) {
 		t.Fatalf("unexpected repeat dismiss error: %v", err)
+	}
+}
+
+func TestDismissLegacyAndExplicitSymlinkTrustedEntries(t *testing.T) {
+	for name, backend := range map[string]AttachmentBackend{
+		"legacy":   "",
+		"explicit": AttachmentBackendSymlink,
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := testutil.NewHarness(t)
+			setEnv(t, h)
+			initWorkspace(t, h)
+
+			repoPath := filepath.Join(h.TrustedRoot, "service")
+			h.InitRepo(repoPath)
+			linkPath := filepath.Join(h.Workspace, "service")
+			if err := os.Symlink(repoPath, linkPath); err != nil {
+				t.Fatalf("create symlink: %v", err)
+			}
+			entry := Entry{RepoRef: "acme/service", CheckoutPath: repoPath, TrustClass: TrustClassTrusted, Backend: backend, MountPath: linkPath}
+			if err := saveManifest(h.Workspace, Manifest{Version: manifestVersion, PrimaryRoot: h.Workspace, Trusted: []Entry{entry}}); err != nil {
+				t.Fatalf("save manifest: %v", err)
+			}
+
+			app := NewApp()
+			app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+			if err := app.Dismiss(h.Workspace, "acme/service"); err != nil {
+				t.Fatalf("Dismiss returned error: %v", err)
+			}
+			if _, err := os.Lstat(linkPath); !os.IsNotExist(err) {
+				t.Fatalf("expected symlink removal, got %v", err)
+			}
+			if _, err := os.Stat(repoPath); err != nil {
+				t.Fatalf("source checkout should remain: %v", err)
+			}
+		})
+	}
+}
+
+func TestDismissLinuxNativeBindRoutesToNativeCleanup(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	mountPath := filepath.Join(h.Workspace, "service")
+	if err := os.Mkdir(mountPath, 0o755); err != nil {
+		t.Fatalf("mkdir mount path: %v", err)
+	}
+	entry := Entry{RepoRef: "acme/service", CheckoutPath: repoPath, TrustClass: TrustClassTrusted, Backend: AttachmentBackendLinuxNativeBind, MountPath: mountPath}
+	if err := saveManifest(h.Workspace, Manifest{Version: manifestVersion, PrimaryRoot: h.Workspace, Trusted: []Entry{entry}}); err != nil {
+		t.Fatalf("save manifest: %v", err)
+	}
+
+	var called bool
+	oldDismiss := nativeBindDismiss
+	nativeBindDismiss = func(_ Runner, got Entry) error {
+		called = true
+		if got.MountPath != mountPath {
+			t.Fatalf("unexpected mount path: %#v", got)
+		}
+		return os.Remove(mountPath)
+	}
+	t.Cleanup(func() { nativeBindDismiss = oldDismiss })
+
+	if err := NewApp().Dismiss(h.Workspace, "acme/service"); err != nil {
+		t.Fatalf("Dismiss returned error: %v", err)
+	}
+	if !called {
+		t.Fatal("expected native bind dismiss path to run")
+	}
+	manifest, err := loadManifest(h.Workspace)
+	if err != nil {
+		t.Fatalf("loadManifest returned error: %v", err)
+	}
+	if len(manifest.Trusted) != 0 {
+		t.Fatalf("expected native bind manifest entry removal, got %#v", manifest.Trusted)
+	}
+	if _, err := os.Stat(repoPath); err != nil {
+		t.Fatalf("source checkout should remain: %v", err)
+	}
+}
+
+func TestDismissUnsupportedTrustedBackendFailsClosed(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	mountPath := filepath.Join(h.Workspace, "service")
+	entry := Entry{RepoRef: "acme/service", CheckoutPath: repoPath, TrustClass: TrustClassTrusted, Backend: AttachmentBackendLinuxFuseBind, MountPath: mountPath}
+	if err := saveManifest(h.Workspace, Manifest{Version: manifestVersion, PrimaryRoot: h.Workspace, Trusted: []Entry{entry}}); err != nil {
+		t.Fatalf("save manifest: %v", err)
+	}
+
+	err := NewApp().Dismiss(h.Workspace, "acme/service")
+	if err == nil || !strings.Contains(err.Error(), "not supported by dismiss yet") {
+		t.Fatalf("expected unsupported backend dismiss error, got %v", err)
+	}
+	manifest, loadErr := loadManifest(h.Workspace)
+	if loadErr != nil {
+		t.Fatalf("loadManifest returned error: %v", loadErr)
+	}
+	if len(manifest.Trusted) != 1 {
+		t.Fatalf("unsupported dismiss should preserve manifest entry, got %#v", manifest.Trusted)
+	}
+	if _, statErr := os.Stat(repoPath); statErr != nil {
+		t.Fatalf("source checkout should remain: %v", statErr)
 	}
 }
 

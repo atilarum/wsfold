@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/atilarum/wsfold/internal/wsfold"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/openclaw/wsfold/internal/wsfold"
 )
 
 func TestPickerModelEnterSelectsCurrentRowInSingleMode(t *testing.T) {

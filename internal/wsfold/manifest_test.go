@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openclaw/wsfold/internal/testutil"
+	"github.com/atilarum/wsfold/internal/testutil"
 )
 
 func TestManifestRoundTripMatchesGolden(t *testing.T) {
@@ -58,6 +58,120 @@ func TestManifestRoundTripMatchesGolden(t *testing.T) {
 	}
 	if len(loaded.Trusted) != 1 || len(loaded.External) != 1 {
 		t.Fatalf("unexpected loaded manifest: %#v", loaded)
+	}
+}
+
+func TestManifestNormalizesLegacyTrustedBackend(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	text := `version: 1
+primary_root: ` + root + `
+trusted:
+    - repo_ref: acme/service
+      checkout_path: /trusted/acme/service
+      trust_class: trusted
+      mount_path: ` + filepath.Join(root, "service") + `
+external: []
+`
+	if err := os.MkdirAll(filepath.Dir(manifestPath(root)), 0o755); err != nil {
+		t.Fatalf("mkdir manifest dir: %v", err)
+	}
+	if err := os.WriteFile(manifestPath(root), []byte(text), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	manifest, err := loadManifest(root)
+	if err != nil {
+		t.Fatalf("loadManifest returned error: %v", err)
+	}
+	if got := manifest.Trusted[0].Backend; got != AttachmentBackendSymlink {
+		t.Fatalf("expected legacy trusted backend to normalize to symlink, got %q", got)
+	}
+}
+
+func TestManifestRejectsUnsupportedTrustedBackend(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	text := `version: 1
+primary_root: ` + root + `
+trusted:
+    - repo_ref: acme/service
+      checkout_path: /trusted/acme/service
+      trust_class: trusted
+      backend: made-up
+      mount_path: ` + filepath.Join(root, "service") + `
+external: []
+`
+	if err := os.MkdirAll(filepath.Dir(manifestPath(root)), 0o755); err != nil {
+		t.Fatalf("mkdir manifest dir: %v", err)
+	}
+	if err := os.WriteFile(manifestPath(root), []byte(text), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	err := func() error {
+		_, err := loadManifest(root)
+		return err
+	}()
+	if err == nil || !strings.Contains(err.Error(), `unsupported trusted attachment backend "made-up"`) {
+		t.Fatalf("expected unsupported backend error, got %v", err)
+	}
+}
+
+func TestManifestPreservesSupportedTrustedBackends(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	manifest := Manifest{
+		Version:     manifestVersion,
+		PrimaryRoot: root,
+		Trusted: []Entry{
+			{RepoRef: "acme/a", CheckoutPath: "/trusted/a", TrustClass: TrustClassTrusted, Backend: AttachmentBackendSymlink, MountPath: filepath.Join(root, "a")},
+			{RepoRef: "acme/b", CheckoutPath: "/trusted/b", TrustClass: TrustClassTrusted, Backend: AttachmentBackendLinuxNativeBind, MountPath: filepath.Join(root, "b")},
+			{RepoRef: "acme/c", CheckoutPath: "/trusted/c", TrustClass: TrustClassTrusted, Backend: AttachmentBackendLinuxFuseBind, MountPath: filepath.Join(root, "c")},
+			{RepoRef: "acme/d", CheckoutPath: "/trusted/d", TrustClass: TrustClassTrusted, Backend: AttachmentBackendMacOSFuseBind, MountPath: filepath.Join(root, "d")},
+		},
+	}
+
+	if err := saveManifest(root, manifest); err != nil {
+		t.Fatalf("saveManifest returned error: %v", err)
+	}
+	loaded, err := loadManifest(root)
+	if err != nil {
+		t.Fatalf("loadManifest returned error: %v", err)
+	}
+	got := map[AttachmentBackend]bool{}
+	for _, entry := range loaded.Trusted {
+		got[entry.Backend] = true
+	}
+	for _, backend := range []AttachmentBackend{AttachmentBackendSymlink, AttachmentBackendLinuxNativeBind, AttachmentBackendLinuxFuseBind, AttachmentBackendMacOSFuseBind} {
+		if !got[backend] {
+			t.Fatalf("expected backend %s to be preserved, got %#v", backend, loaded.Trusted)
+		}
+	}
+}
+
+func TestManifestRejectsInvalidTrustedMountPaths(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	for name, trusted := range map[string][]Entry{
+		"empty": {
+			{RepoRef: "acme/service", CheckoutPath: "/trusted/service", TrustClass: TrustClassTrusted, Backend: AttachmentBackendSymlink},
+		},
+		"duplicate": {
+			{RepoRef: "acme/a", CheckoutPath: "/trusted/a", TrustClass: TrustClassTrusted, Backend: AttachmentBackendSymlink, MountPath: filepath.Join(root, "service")},
+			{RepoRef: "acme/b", CheckoutPath: "/trusted/b", TrustClass: TrustClassTrusted, Backend: AttachmentBackendLinuxNativeBind, MountPath: filepath.Join(root, ".", "service")},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := saveManifest(root, Manifest{Version: manifestVersion, PrimaryRoot: root, Trusted: trusted})
+			if err == nil {
+				t.Fatal("expected saveManifest to reject invalid trusted mount paths")
+			}
+		})
 	}
 }
 

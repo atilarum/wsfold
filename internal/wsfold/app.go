@@ -191,9 +191,29 @@ func (a *App) attachRepo(primaryRoot string, cfg Config, repo Repo, requested Tr
 	}
 
 	if requested == TrustClassTrusted {
-		entry.MountPath = trustedMountPath(primaryRoot, cfg.ProjectsDirName, completionFolderName(repo.CheckoutPath))
-		if err := ensureTrustedSymlink(entry.MountPath, repo.CheckoutPath); err != nil {
+		backend, err := selectedTrustedBackend()
+		if err != nil {
 			return err
+		}
+		entry.Backend = backend
+		entry.MountPath = trustedMountPath(primaryRoot, cfg.ProjectsDirName, completionFolderName(repo.CheckoutPath))
+		if err := ensureNoTrustedMountPathConflict(manifest, entry); err != nil {
+			return err
+		}
+		switch backend {
+		case AttachmentBackendSymlink:
+			if err := ensureTrustedSymlink(entry.MountPath, repo.CheckoutPath); err != nil {
+				return err
+			}
+		case AttachmentBackendLinuxNativeBind:
+			if err := nativeBindPreflight(a.Runner, manifest, entry); err != nil {
+				return err
+			}
+			if err := nativeBindAttach(a.Runner, entry); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("trusted attachment backend %s is not implemented", backend)
 		}
 	}
 
@@ -236,8 +256,30 @@ func (a *App) Dismiss(cwd string, ref string) error {
 	}
 
 	if entry.TrustClass == TrustClassTrusted && entry.MountPath != "" {
-		if err := removeTrustedSymlink(entry.MountPath); err != nil {
-			return err
+		backend := entry.Backend
+		if backend == "" {
+			backend = AttachmentBackendSymlink
+		}
+		switch backend {
+		case AttachmentBackendSymlink:
+			if err := removeTrustedSymlink(entry.MountPath); err != nil {
+				return err
+			}
+		case AttachmentBackendLinuxNativeBind:
+			if err := nativeBindDismiss(a.Runner, entry); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("trusted attachment backend %s is not supported by dismiss yet", backend)
+		}
+	}
+
+	if entry.TrustClass == TrustClassTrusted && entry.MountPath == "" {
+		if entry.Backend != "" && entry.Backend != AttachmentBackendSymlink {
+			return fmt.Errorf("trusted attachment backend %s has empty mount_path and cannot be dismissed safely", entry.Backend)
+		}
+		if entry.Backend == AttachmentBackendSymlink || entry.Backend == "" {
+			return fmt.Errorf("trusted attachment %s has empty mount_path and cannot be dismissed safely", entry.RepoRef)
 		}
 	}
 
@@ -294,7 +336,15 @@ func formatSummonSuccess(requested TrustClass, repo Repo, entry Entry, primaryRo
 			mountDisplay = rel
 		}
 		mountPath := ansiYellowBold + mountDisplay + ansiReset
-		return fmt.Sprintf("%s Trusted repository attached: %s at %s", check, repoRef, mountPath)
+		backend := entry.Backend
+		if backend == "" {
+			backend = AttachmentBackendSymlink
+		}
+		message := fmt.Sprintf("%s Trusted repository attached: %s at %s using %s", check, repoRef, mountPath, backend)
+		if backend == AttachmentBackendLinuxNativeBind {
+			message += fmt.Sprintf("\nManual backout: sudo umount %s", entry.MountPath)
+		}
+		return message
 	case TrustClassExternal:
 		return fmt.Sprintf("%s External repository added: %s", check, repoRef)
 	default:

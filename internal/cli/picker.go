@@ -8,10 +8,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/atilarum/wsfold/internal/wsfold"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/openclaw/wsfold/internal/wsfold"
 	"github.com/sahilm/fuzzy"
 )
 
