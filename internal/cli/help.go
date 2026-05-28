@@ -86,7 +86,7 @@ var envHelpEntries = []envHelpEntry{
 		Name:        "WSFOLD_MOUNT_BACKEND",
 		Required:    false,
 		Default:     "symlink",
-		Description: "trusted attach backend; supported values: symlink, linux-native-bind",
+		Description: "trusted attach backend; supported values: symlink, linux-fuse-bind, linux-native-bind",
 	},
 }
 
@@ -113,9 +113,11 @@ func helpText() string {
 	b.WriteString("If no repository argument is provided, the command opens an interactive picker with flexible search.\n\n")
 	b.WriteString("You can refer to a repository by its local folder name, GitHub owner/name, or owner/name/branch for a local worktree.\n\n")
 	b.WriteString("`wsfold worktree` is trusted-only and creates environment-local worktrees under WSFOLD_TRUSTED_DIR.\n\n")
-	b.WriteString("Trusted attachments use the symlink backend by default. In Linux devcontainers, set\n")
-	b.WriteString("WSFOLD_MOUNT_BACKEND=linux-native-bind to attach trusted repositories with sudo mount --bind;\n")
-	b.WriteString("the container must include CAP_SYS_ADMIN and usable non-interactive sudo.\n\n")
+	b.WriteString("Trusted attachments use the symlink backend by default. On Linux hosts with FUSE3, bindfs,\n")
+	b.WriteString("fusermount3, and a usable /dev/fuse, set WSFOLD_MOUNT_BACKEND=linux-fuse-bind to run\n")
+	b.WriteString("bindfs --no-allow-other and detach with fusermount3 -u. Linux devcontainers may instead use\n")
+	b.WriteString("WSFOLD_MOUNT_BACKEND=linux-native-bind with sudo mount --bind, CAP_SYS_ADMIN, and usable sudo.\n")
+	b.WriteString("Docker users who choose linux-fuse-bind inside a container must expose /dev/fuse and add CAP_SYS_ADMIN.\n\n")
 
 	writeSection(&b, "Commands")
 	for _, entry := range commandHelpEntries {

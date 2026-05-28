@@ -15,6 +15,8 @@ var (
 	nativeBindPreflight = preflightNativeBind
 	nativeBindAttach    = attachNativeBind
 	nativeBindDismiss   = dismissNativeBind
+	currentGOOS         = runtime.GOOS
+	activeMountInfoFunc = activeMountInfo
 )
 
 func selectedTrustedBackend() (AttachmentBackend, error) {
@@ -26,15 +28,17 @@ func selectedTrustedBackend() (AttachmentBackend, error) {
 		return AttachmentBackendSymlink, nil
 	case AttachmentBackendLinuxNativeBind:
 		return AttachmentBackendLinuxNativeBind, nil
-	case AttachmentBackendLinuxFuseBind, AttachmentBackendMacOSFuseBind:
-		return "", fmt.Errorf("WSFOLD_MOUNT_BACKEND=%s is not selectable yet; supported values are %s and %s", value, AttachmentBackendSymlink, AttachmentBackendLinuxNativeBind)
+	case AttachmentBackendLinuxFuseBind:
+		return AttachmentBackendLinuxFuseBind, nil
+	case AttachmentBackendMacOSFuseBind:
+		return "", fmt.Errorf("WSFOLD_MOUNT_BACKEND=%s is not selectable yet; supported values are %s, %s, and %s", value, AttachmentBackendSymlink, AttachmentBackendLinuxNativeBind, AttachmentBackendLinuxFuseBind)
 	default:
-		return "", fmt.Errorf("unsupported WSFOLD_MOUNT_BACKEND %q; supported values are %s and %s", value, AttachmentBackendSymlink, AttachmentBackendLinuxNativeBind)
+		return "", fmt.Errorf("unsupported WSFOLD_MOUNT_BACKEND %q; supported values are %s, %s, and %s", value, AttachmentBackendSymlink, AttachmentBackendLinuxNativeBind, AttachmentBackendLinuxFuseBind)
 	}
 }
 
 func preflightNativeBind(runner Runner, manifest Manifest, entry Entry) error {
-	if runtime.GOOS != "linux" {
+	if currentGOOS != "linux" {
 		return fmt.Errorf("%s is only supported on Linux; native bind attach uses sudo mount --bind", AttachmentBackendLinuxNativeBind)
 	}
 	inContainer, err := runningInContainer()
@@ -217,7 +221,7 @@ func hasCapabilityInBoundingSet(bit uint) (bool, error) {
 }
 
 func isActiveMountpoint(path string) (bool, error) {
-	mounts, err := activeMountpoints()
+	mounts, err := activeMountInfoFunc()
 	if err != nil {
 		return false, err
 	}
@@ -225,7 +229,25 @@ func isActiveMountpoint(path string) (bool, error) {
 	return ok, nil
 }
 
+type mountPointInfo struct {
+	Path   string
+	Source string
+	FSType string
+}
+
 func activeMountpoints() (map[string]struct{}, error) {
+	info, err := activeMountInfoFunc()
+	if err != nil {
+		return nil, err
+	}
+	mounts := map[string]struct{}{}
+	for path := range info {
+		mounts[path] = struct{}{}
+	}
+	return mounts, nil
+}
+
+func activeMountInfo() (map[string]mountPointInfo, error) {
 	data, err := os.ReadFile("/proc/self/mountinfo")
 	if err != nil {
 		return nil, err
@@ -233,8 +255,8 @@ func activeMountpoints() (map[string]struct{}, error) {
 	return parseMountinfo(data)
 }
 
-func parseMountinfo(data []byte) (map[string]struct{}, error) {
-	mounts := map[string]struct{}{}
+func parseMountinfo(data []byte) (map[string]mountPointInfo, error) {
+	mounts := map[string]mountPointInfo{}
 	for _, line := range strings.Split(string(data), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
@@ -247,7 +269,24 @@ func parseMountinfo(data []byte) (map[string]struct{}, error) {
 		if err != nil {
 			return nil, err
 		}
-		mounts[filepath.Clean(mountPoint)] = struct{}{}
+		info := mountPointInfo{Path: filepath.Clean(mountPoint)}
+		for i, field := range fields {
+			if field != "-" {
+				continue
+			}
+			if len(fields) > i+1 {
+				info.FSType = fields[i+1]
+			}
+			if len(fields) > i+2 {
+				source, err := unescapeMountinfoPath(fields[i+2])
+				if err != nil {
+					return nil, err
+				}
+				info.Source = source
+			}
+			break
+		}
+		mounts[info.Path] = info
 	}
 	return mounts, nil
 }

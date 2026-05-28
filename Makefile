@@ -9,14 +9,18 @@ GO_LDFLAGS := -X github.com/atilarum/wsfold/internal/buildinfo.Version=$(VERSION
 GO_BUILD := CGO_ENABLED=0 $(GO) build $(GO_BUILD_FLAGS) -trimpath -ldflags "$(GO_LDFLAGS)"
 GORELEASER := GORELEASER_VERSION=$(GORELEASER_VERSION) ./scripts/run-goreleaser.sh
 
-.PHONY: test build native-bind-e2e release-check release-snapshot
+.PHONY: test build native-bind-e2e linux-fuse-bind-e2e release-check release-snapshot
 
 test:
 	$(GO) test ./...
 	$(MAKE) native-bind-e2e
+	$(MAKE) linux-fuse-bind-e2e
 
 native-bind-e2e:
 	bash ./scripts/native-bind-e2e.sh
+
+linux-fuse-bind-e2e:
+	bash ./scripts/linux-fuse-bind-e2e.sh
 
 build:
 	mkdir -p dist

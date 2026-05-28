@@ -1,0 +1,9 @@
+services:
+  linux-fuse-bind-e2e:
+    build:
+      context: ..
+      dockerfile: scripts/linux-fuse-bind-e2e.Dockerfile
+    devices:
+      - /dev/fuse:/dev/fuse
+    cap_add:
+      - SYS_ADMIN
