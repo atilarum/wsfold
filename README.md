@@ -29,7 +29,7 @@ Recommended installation method: Homebrew.
 If Homebrew is not installed yet, see the official instructions at [brew.sh](https://brew.sh/).
 
 ```bash
-brew tap wsfold/wsfold
+brew tap atilarum/wsfold
 brew install wsfold
 ```
 

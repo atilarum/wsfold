@@ -8,7 +8,7 @@ fi
 
 TAP_DIR="$1"
 VERSION_TAG="${VERSION_TAG:-}"
-SOURCE_REPO="${SOURCE_REPO:-wsfold/wsfold}"
+SOURCE_REPO="${SOURCE_REPO:-atilarum/wsfold}"
 FORMULA_PATH="${FORMULA_PATH:-Formula/wsfold.rb}"
 
 if [[ -z "${VERSION_TAG}" ]]; then

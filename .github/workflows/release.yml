@@ -57,7 +57,7 @@ jobs:
       - name: Checkout Homebrew Tap
         uses: actions/checkout@v4
         with:
-          repository: wsfold/homebrew-wsfold
+          repository: atilarum/homebrew-wsfold
           token: ${{ secrets.HOMEBREW_TAP_PUSH_TOKEN }}
           path: homebrew-tap
 
