@@ -212,6 +212,13 @@ func (a *App) attachRepo(primaryRoot string, cfg Config, repo Repo, requested Tr
 			if err := nativeBindAttach(a.Runner, entry); err != nil {
 				return err
 			}
+		case AttachmentBackendLinuxFuseBind:
+			if err := fuseBindPreflight(a.Runner, manifest, entry); err != nil {
+				return err
+			}
+			if err := fuseBindAttach(a.Runner, entry); err != nil {
+				return err
+			}
 		default:
 			return fmt.Errorf("trusted attachment backend %s is not implemented", backend)
 		}
@@ -267,6 +274,10 @@ func (a *App) Dismiss(cwd string, ref string) error {
 			}
 		case AttachmentBackendLinuxNativeBind:
 			if err := nativeBindDismiss(a.Runner, entry); err != nil {
+				return err
+			}
+		case AttachmentBackendLinuxFuseBind:
+			if err := fuseBindDismiss(a.Runner, entry); err != nil {
 				return err
 			}
 		default:
@@ -343,6 +354,8 @@ func formatSummonSuccess(requested TrustClass, repo Repo, entry Entry, primaryRo
 		message := fmt.Sprintf("%s Trusted repository attached: %s at %s using %s", check, repoRef, mountPath, backend)
 		if backend == AttachmentBackendLinuxNativeBind {
 			message += fmt.Sprintf("\nManual backout: sudo umount %s", entry.MountPath)
+		} else if backend == AttachmentBackendLinuxFuseBind {
+			message += fmt.Sprintf("\nManual backout: fusermount3 -u %s", entry.MountPath)
 		}
 		return message
 	case TrustClassExternal:

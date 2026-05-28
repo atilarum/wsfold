@@ -53,8 +53,18 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(output, "`wsfold worktree` is trusted-only and creates environment-local worktrees under WSFOLD_TRUSTED_DIR.") {
 		t.Fatalf("help output did not contain worktree command note: %q", output)
 	}
-	if !strings.Contains(output, "WSFOLD_MOUNT_BACKEND=linux-native-bind") || !strings.Contains(output, "sudo mount --bind") || !strings.Contains(output, "CAP_SYS_ADMIN") {
-		t.Fatalf("help output did not describe linux-native-bind backend selection: %q", output)
+	for _, snippet := range []string{
+		"WSFOLD_MOUNT_BACKEND=linux-fuse-bind",
+		"bindfs --no-allow-other",
+		"fusermount3 -u",
+		"/dev/fuse",
+		"WSFOLD_MOUNT_BACKEND=linux-native-bind",
+		"sudo mount --bind",
+		"CAP_SYS_ADMIN",
+	} {
+		if !strings.Contains(output, snippet) {
+			t.Fatalf("help output did not describe mount backend detail %q: %q", snippet, output)
+		}
 	}
 	if !strings.Contains(output, "Flags:") || !strings.Contains(output, "-h, --help") || !strings.Contains(output, "-v, --version") {
 		t.Fatalf("help output did not contain flags section: %q", output)
@@ -62,8 +72,11 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(output, "Environment:") || !strings.Contains(output, "WSFOLD_PROJECTS_DIR") || !strings.Contains(output, "default: .") {
 		t.Fatalf("help output did not contain environment section: %q", output)
 	}
-	if !strings.Contains(output, "WSFOLD_MOUNT_BACKEND") || !strings.Contains(output, "default: symlink") || !strings.Contains(output, "linux-native-bind") {
+	if !strings.Contains(output, "WSFOLD_MOUNT_BACKEND") || !strings.Contains(output, "default: symlink") || !strings.Contains(output, "linux-fuse-bind") || !strings.Contains(output, "linux-native-bind") {
 		t.Fatalf("help output did not contain mount backend environment entry: %q", output)
+	}
+	if strings.Contains(output, "--privileged") {
+		t.Fatalf("help output should not recommend privileged containers: %q", output)
 	}
 	if !strings.Contains(output, "Examples:") || !strings.Contains(output, `eval "$(wsfold completion zsh)"`) {
 		t.Fatalf("help output did not contain examples section: %q", output)

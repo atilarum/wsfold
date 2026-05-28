@@ -17,7 +17,7 @@ func TestSelectedTrustedBackend(t *testing.T) {
 		"unset":       {want: AttachmentBackendSymlink},
 		"symlink":     {value: "symlink", want: AttachmentBackendSymlink},
 		"native-bind": {value: "linux-native-bind", want: AttachmentBackendLinuxNativeBind},
-		"fuse":        {value: "linux-fuse-bind", wantErr: "not selectable yet"},
+		"fuse":        {value: "linux-fuse-bind", want: AttachmentBackendLinuxFuseBind},
 		"macos":       {value: "macos-fuse-bind", wantErr: "not selectable yet"},
 		"unknown":     {value: "other", wantErr: "unsupported WSFOLD_MOUNT_BACKEND"},
 	} {

@@ -80,7 +80,7 @@ func TestSummonExistingTrustedRepo(t *testing.T) {
 func TestSummonRejectsUnsupportedMountBackend(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnv(t, h)
-	t.Setenv("WSFOLD_MOUNT_BACKEND", "linux-fuse-bind")
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "macos-fuse-bind")
 	initWorkspace(t, h)
 
 	repoPath := filepath.Join(h.TrustedRoot, "service")
@@ -97,6 +97,179 @@ func TestSummonRejectsUnsupportedMountBackend(t *testing.T) {
 	}
 	if len(manifest.Trusted) != 0 {
 		t.Fatalf("unsupported backend should not write manifest entry: %#v", manifest.Trusted)
+	}
+}
+
+func TestSummonLinuxFuseBindUsesMountBeforeManifestWrite(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "linux-fuse-bind")
+	initWorkspace(t, h)
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	h.RunGit(repoPath, "remote", "add", "origin", "https://github.com/acme/service.git")
+
+	var calls []string
+	oldPreflight := fuseBindPreflight
+	oldAttach := fuseBindAttach
+	fuseBindPreflight = func(_ Runner, _ Manifest, entry Entry) error {
+		calls = append(calls, "preflight:"+entry.MountPath)
+		return nil
+	}
+	fuseBindAttach = func(r Runner, entry Entry) error {
+		_ = r
+		calls = append(calls, "bindfs --no-allow-other "+entry.CheckoutPath+" "+entry.MountPath)
+		calls = append(calls, "mount:"+entry.CheckoutPath+":"+entry.MountPath)
+		if _, err := os.Stat(manifestPath(h.Workspace)); err != nil {
+			calls = append(calls, "manifest-before-mount:missing")
+		} else {
+			calls = append(calls, "manifest-before-mount:present")
+		}
+		return os.Mkdir(entry.MountPath, 0o755)
+	}
+	t.Cleanup(func() {
+		fuseBindPreflight = oldPreflight
+		fuseBindAttach = oldAttach
+	})
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	var stdout bytes.Buffer
+	app.Stdout = &stdout
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("Summon returned error: %v", err)
+	}
+
+	manifest, err := loadManifest(h.Workspace)
+	if err != nil {
+		t.Fatalf("loadManifest returned error: %v", err)
+	}
+	if len(manifest.Trusted) != 1 || manifest.Trusted[0].Backend != AttachmentBackendLinuxFuseBind {
+		t.Fatalf("expected linux-fuse-bind manifest entry, got %#v", manifest.Trusted)
+	}
+	if manifest.Trusted[0].CheckoutPath != repoPath || manifest.Trusted[0].MountPath == repoPath {
+		t.Fatalf("expected checkout_path and managed mount_path, got %#v", manifest.Trusted[0])
+	}
+	if !strings.Contains(stdout.String(), "linux-fuse-bind") || !strings.Contains(stdout.String(), "fusermount3 -u") {
+		t.Fatalf("expected FUSE bind success output with backout, got:\n%s", stdout.String())
+	}
+	if !containsString(calls, "bindfs --no-allow-other "+repoPath+" "+filepath.Join(h.Workspace, "service")) {
+		t.Fatalf("expected bindfs command construction; calls: %v", calls)
+	}
+	if !containsString(calls, "manifest-before-mount:present") {
+		t.Fatalf("expected mount to occur before updated manifest write; calls: %v", calls)
+	}
+
+	workspaceBytes, err := os.ReadFile(workspacePath(h.Workspace))
+	if err != nil {
+		t.Fatalf("read workspace file: %v", err)
+	}
+	if !strings.Contains(string(workspaceBytes), `"path": "service"`) {
+		t.Fatalf("workspace should include managed mount path:\n%s", string(workspaceBytes))
+	}
+	if strings.Contains(string(workspaceBytes), repoPath) {
+		t.Fatalf("workspace should not point trusted root at original checkout path:\n%s", string(workspaceBytes))
+	}
+}
+
+func TestSummonLinuxFuseBindMountFailureLeavesManifestUnchanged(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "linux-fuse-bind")
+	initWorkspace(t, h)
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	h.RunGit(repoPath, "remote", "add", "origin", "https://github.com/acme/service.git")
+
+	oldPreflight := fuseBindPreflight
+	oldAttach := fuseBindAttach
+	fuseBindPreflight = func(Runner, Manifest, Entry) error { return nil }
+	fuseBindAttach = func(Runner, Entry) error { return os.ErrPermission }
+	t.Cleanup(func() {
+		fuseBindPreflight = oldPreflight
+		fuseBindAttach = oldAttach
+	})
+
+	err := NewApp().Summon(h.Workspace, "service")
+	if err == nil {
+		t.Fatal("expected FUSE bind mount failure")
+	}
+	manifest, loadErr := loadManifest(h.Workspace)
+	if loadErr != nil {
+		t.Fatalf("loadManifest returned error: %v", loadErr)
+	}
+	if len(manifest.Trusted) != 0 {
+		t.Fatalf("failed FUSE bind should not write manifest entry: %#v", manifest.Trusted)
+	}
+	if _, statErr := os.Stat(repoPath); statErr != nil {
+		t.Fatalf("source checkout should remain after mount failure: %v", statErr)
+	}
+}
+
+func TestDismissLinuxFuseBindRunsBackendBeforeManifestRemoval(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	mountPath := filepath.Join(h.Workspace, "service")
+	if err := os.Mkdir(mountPath, 0o755); err != nil {
+		t.Fatalf("mkdir mount path: %v", err)
+	}
+	manifest := Manifest{
+		Version:     manifestVersion,
+		PrimaryRoot: h.Workspace,
+		Trusted: []Entry{{
+			RepoRef:      "service",
+			CheckoutPath: repoPath,
+			TrustClass:   TrustClassTrusted,
+			Backend:      AttachmentBackendLinuxFuseBind,
+			MountPath:    mountPath,
+		}},
+	}
+	if err := saveManifest(h.Workspace, manifest); err != nil {
+		t.Fatalf("save manifest: %v", err)
+	}
+	if err := writeWorkspace(h.Workspace, Manifest{}, manifest, "."); err != nil {
+		t.Fatalf("write workspace: %v", err)
+	}
+
+	var calls []string
+	oldDismiss := fuseBindDismiss
+	fuseBindDismiss = func(_ Runner, entry Entry) error {
+		calls = append(calls, "fusermount3 -u "+entry.MountPath)
+		if current, err := loadManifest(h.Workspace); err != nil || len(current.Trusted) != 1 {
+			t.Fatalf("manifest should still contain entry during unmount, got %#v, %v", current.Trusted, err)
+		}
+		return os.Remove(entry.MountPath)
+	}
+	t.Cleanup(func() { fuseBindDismiss = oldDismiss })
+
+	if err := NewApp().Dismiss(h.Workspace, "service"); err != nil {
+		t.Fatalf("Dismiss returned error: %v", err)
+	}
+	if !containsString(calls, "fusermount3 -u "+mountPath) {
+		t.Fatalf("expected fusermount3 call, got %v", calls)
+	}
+	current, err := loadManifest(h.Workspace)
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	if len(current.Trusted) != 0 {
+		t.Fatalf("expected manifest entry removed, got %#v", current.Trusted)
+	}
+	if _, err := os.Stat(repoPath); err != nil {
+		t.Fatalf("source checkout should remain: %v", err)
+	}
+	workspaceBytes, err := os.ReadFile(workspacePath(h.Workspace))
+	if err != nil {
+		t.Fatalf("read workspace: %v", err)
+	}
+	if strings.Contains(string(workspaceBytes), `"path": "service"`) {
+		t.Fatalf("workspace should remove FUSE bind folder:\n%s", string(workspaceBytes))
 	}
 }
 
@@ -653,7 +826,7 @@ func TestDismissUnsupportedTrustedBackendFailsClosed(t *testing.T) {
 	repoPath := filepath.Join(h.TrustedRoot, "service")
 	h.InitRepo(repoPath)
 	mountPath := filepath.Join(h.Workspace, "service")
-	entry := Entry{RepoRef: "acme/service", CheckoutPath: repoPath, TrustClass: TrustClassTrusted, Backend: AttachmentBackendLinuxFuseBind, MountPath: mountPath}
+	entry := Entry{RepoRef: "acme/service", CheckoutPath: repoPath, TrustClass: TrustClassTrusted, Backend: AttachmentBackendMacOSFuseBind, MountPath: mountPath}
 	if err := saveManifest(h.Workspace, Manifest{Version: manifestVersion, PrimaryRoot: h.Workspace, Trusted: []Entry{entry}}); err != nil {
 		t.Fatalf("save manifest: %v", err)
 	}
