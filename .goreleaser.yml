@@ -21,9 +21,9 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/openclaw/wsfold/internal/buildinfo.Version={{ .Version }}
-      - -X github.com/openclaw/wsfold/internal/buildinfo.Commit={{ .Commit }}
-      - -X github.com/openclaw/wsfold/internal/buildinfo.Date={{ .Date }}
+      - -X github.com/atilarum/wsfold/internal/buildinfo.Version={{ .Version }}
+      - -X github.com/atilarum/wsfold/internal/buildinfo.Commit={{ .Commit }}
+      - -X github.com/atilarum/wsfold/internal/buildinfo.Date={{ .Date }}
 
 archives:
   - id: release-archives
