@@ -54,7 +54,7 @@ class Wsfold < Formula
   desc "Workspace composition CLI for trusted multi-repo development"
   homepage "https://github.com/${SOURCE_REPO}"
   version "${VERSION}"
-  license "Apache-2.0"
+  license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
@@ -79,7 +79,7 @@ class Wsfold < Formula
   def install
     bin.install "wsfold"
 
-    (zsh_completion/"_wsfold").write Utils.safe_popen_read(bin/"wsfold", "completion", "zsh")
+    generate_completions_from_executable(bin/"wsfold", "completion", shells: [:zsh])
   end
 
   def caveats
