@@ -102,7 +102,7 @@ func TestFuseBindDismissUnmountsAndRemovesResidue(t *testing.T) {
 	oldMountInfo := activeMountInfoFunc
 	activeMountInfoFunc = func() (map[string]mountPointInfo, error) {
 		return map[string]mountPointInfo{
-			filepath.Clean(entry.MountPath): {Path: entry.MountPath, FSType: "fuse.bindfs", Source: "bindfs"},
+			filepath.Clean(entry.MountPath): {Path: entry.MountPath, FSType: "fuse", Source: entry.CheckoutPath},
 		}, nil
 	}
 	t.Cleanup(func() { activeMountInfoFunc = oldMountInfo })
@@ -157,6 +157,20 @@ func TestFuseBindDismissClassifiesRecoveryFailures(t *testing.T) {
 	}
 	if len(calls) != 0 {
 		t.Fatalf("unrelated FUSE mount should not be unmounted, got calls: %v", calls)
+	}
+
+	entry.CheckoutPath = filepath.Join(root, "source")
+	mustMkdir(t, entry.CheckoutPath)
+	activeMountInfoFunc = func() (map[string]mountPointInfo, error) {
+		return map[string]mountPointInfo{
+			filepath.Clean(entry.MountPath): {Path: entry.MountPath, FSType: "fuse", Source: filepath.Join(root, "other-source")},
+		}, nil
+	}
+	if err := dismissFuseBind(runner, entry); err == nil || !strings.Contains(err.Error(), "does not look like the expected bindfs") {
+		t.Fatalf("expected FUSE source mismatch diagnostic, got %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("FUSE mount with different source should not be unmounted, got calls: %v", calls)
 	}
 
 	activeMountInfoFunc = func() (map[string]mountPointInfo, error) {

@@ -108,7 +108,7 @@ func dismissFuseBind(runner Runner, entry Entry) error {
 	}
 	info, mounted := mounts[filepath.Clean(entry.MountPath)]
 	if mounted {
-		if !isExpectedFuseBindMount(info) {
+		if !isExpectedFuseBindMount(info, entry) {
 			return fmt.Errorf("%s target %s is an active mountpoint but does not look like the expected bindfs FUSE attachment; inspect it manually before unmounting", AttachmentBackendLinuxFuseBind, entry.MountPath)
 		}
 		if _, err := runner.Command("", "fusermount3", "-u", entry.MountPath); err != nil {
@@ -124,10 +124,19 @@ func dismissFuseBind(runner Runner, entry Entry) error {
 	return nil
 }
 
-func isExpectedFuseBindMount(info mountPointInfo) bool {
+func isExpectedFuseBindMount(info mountPointInfo, entry Entry) bool {
 	fsType := strings.ToLower(info.FSType)
 	source := strings.ToLower(info.Source)
-	return strings.Contains(fsType, "bindfs") || strings.Contains(source, "bindfs")
+	if strings.Contains(fsType, "bindfs") || strings.Contains(source, "bindfs") {
+		return true
+	}
+	if fsType != "fuse" {
+		return false
+	}
+	if strings.TrimSpace(info.Source) == "" || strings.TrimSpace(entry.CheckoutPath) == "" {
+		return false
+	}
+	return filepath.Clean(info.Source) == filepath.Clean(entry.CheckoutPath)
 }
 
 func cleanupFuseBindTarget(path string) {
