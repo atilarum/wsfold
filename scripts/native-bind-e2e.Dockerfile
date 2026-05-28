@@ -4,8 +4,11 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends git sudo util-linux ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY scripts/native-bind-e2e.sh /usr/local/bin/native-bind-e2e.sh
-COPY dist/wsfold-native-bind-e2e /usr/local/bin/wsfold
-RUN chmod +x /usr/local/bin/native-bind-e2e.sh /usr/local/bin/wsfold
+WORKDIR /workspace/wsfold
+COPY . .
+RUN chmod +x /workspace/wsfold/dist/wsfold-native-bind-e2e
 
-ENTRYPOINT ["/usr/local/bin/native-bind-e2e.sh", "container"]
+ENV WSFOLD_NATIVE_BIND_E2E=1
+ENV WSFOLD_E2E_WSFOLD_BINARY=/workspace/wsfold/dist/wsfold-native-bind-e2e
+
+ENTRYPOINT ["go", "test", "./internal/e2e/nativebind", "-count=1", "-v"]
