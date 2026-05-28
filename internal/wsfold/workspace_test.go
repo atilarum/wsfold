@@ -90,6 +90,55 @@ func TestRenderWorkspaceCustomProjectsDirDoesNotCreateExcludes(t *testing.T) {
 	}
 }
 
+func TestRenderWorkspaceUsesTrustedMountPathForEveryBackend(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	manifest := Manifest{
+		Version:     manifestVersion,
+		PrimaryRoot: root,
+		Trusted: []Entry{
+			{
+				RepoRef:      "acme/service",
+				CheckoutPath: "/trusted/acme/service",
+				TrustClass:   TrustClassTrusted,
+				Backend:      AttachmentBackendLinuxNativeBind,
+				MountPath:    filepath.Join(root, "_ctx", "service"),
+			},
+		},
+	}
+
+	data, err := renderWorkspace(root, Manifest{}, manifest, "_ctx")
+	if err != nil {
+		t.Fatalf("renderWorkspace returned error: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `"_ctx/service"`) {
+		t.Fatalf("workspace should include trusted mount_path:\n%s", text)
+	}
+	if strings.Contains(text, "/trusted/acme/service") {
+		t.Fatalf("workspace should not point trusted folder at checkout_path:\n%s", text)
+	}
+}
+
+func TestRenderWorkspaceRejectsTrustedEntryWithoutMountPath(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	manifest := Manifest{
+		Version:     manifestVersion,
+		PrimaryRoot: root,
+		Trusted: []Entry{
+			{RepoRef: "acme/service", CheckoutPath: "/trusted/acme/service", TrustClass: TrustClassTrusted, Backend: AttachmentBackendSymlink},
+		},
+	}
+
+	err := writeWorkspace(root, Manifest{}, manifest, ".")
+	if err == nil || !strings.Contains(err.Error(), "empty mount_path") {
+		t.Fatalf("expected empty mount_path error, got %v", err)
+	}
+}
+
 func TestRenderWorkspaceMergesExistingWorkspaceState(t *testing.T) {
 	t.Parallel()
 

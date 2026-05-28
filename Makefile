@@ -9,10 +9,16 @@ GO_LDFLAGS := -X github.com/openclaw/wsfold/internal/buildinfo.Version=$(VERSION
 GO_BUILD := CGO_ENABLED=0 $(GO) build $(GO_BUILD_FLAGS) -trimpath -ldflags "$(GO_LDFLAGS)"
 GORELEASER := GORELEASER_VERSION=$(GORELEASER_VERSION) ./scripts/run-goreleaser.sh
 
-.PHONY: test build release-check release-snapshot
+.PHONY: test build native-bind-e2e release-check release-snapshot
 
 test:
 	$(GO) test ./...
+	$(MAKE) native-bind-e2e
+
+native-bind-e2e:
+	mkdir -p dist
+	$(GO_BUILD) -o dist/$(PROJECT_NAME)-native-bind-e2e ./cmd/wsfold
+	WSFOLD_E2E_BINARY=dist/$(PROJECT_NAME)-native-bind-e2e bash ./scripts/native-bind-e2e.sh
 
 build:
 	mkdir -p dist

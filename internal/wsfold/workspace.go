@@ -95,7 +95,7 @@ func workspaceFolders(manifest Manifest) ([]workspaceFolder, error) {
 	for _, entry := range manifest.Trusted {
 		path := entry.MountPath
 		if path == "" {
-			path = entry.CheckoutPath
+			return nil, fmt.Errorf("trusted attachment %q has empty mount_path", entry.RepoRef)
 		}
 		relativePath, err := workspaceRelativePath(manifest.PrimaryRoot, path)
 		if err != nil {

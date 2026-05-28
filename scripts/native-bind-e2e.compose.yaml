@@ -1,0 +1,7 @@
+services:
+  native-bind-e2e:
+    build:
+      context: ..
+      dockerfile: scripts/native-bind-e2e.Dockerfile
+    cap_add:
+      - SYS_ADMIN

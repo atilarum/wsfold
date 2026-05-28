@@ -56,6 +56,9 @@ func loadManifest(primaryRoot string) (Manifest, error) {
 	if manifest.PrimaryRoot == "" {
 		manifest.PrimaryRoot = primaryRoot
 	}
+	if err := normalizeManifest(&manifest); err != nil {
+		return Manifest{}, err
+	}
 	sortEntries(manifest.Trusted)
 	sortEntries(manifest.External)
 	return manifest, nil
@@ -64,6 +67,9 @@ func loadManifest(primaryRoot string) (Manifest, error) {
 func saveManifest(primaryRoot string, manifest Manifest) error {
 	manifest.Version = manifestVersion
 	manifest.PrimaryRoot = primaryRoot
+	if err := normalizeManifest(&manifest); err != nil {
+		return err
+	}
 	sortEntries(manifest.Trusted)
 	sortEntries(manifest.External)
 
@@ -77,6 +83,41 @@ func saveManifest(primaryRoot string, manifest Manifest) error {
 	}
 
 	return os.WriteFile(manifestPath(primaryRoot), data, 0o644)
+}
+
+func normalizeManifest(manifest *Manifest) error {
+	seenMountPaths := map[string]Entry{}
+	for i := range manifest.Trusted {
+		entry := &manifest.Trusted[i]
+		if entry.Backend == "" {
+			entry.Backend = AttachmentBackendSymlink
+		}
+		if !isSupportedAttachmentBackend(entry.Backend) {
+			return fmt.Errorf("unsupported trusted attachment backend %q for %s", entry.Backend, entry.RepoRef)
+		}
+		if strings.TrimSpace(entry.MountPath) == "" {
+			return fmt.Errorf("trusted attachment %q has empty mount_path", entry.RepoRef)
+		}
+		cleanMountPath := filepath.Clean(entry.MountPath)
+		if previous, ok := seenMountPaths[cleanMountPath]; ok && previous.CheckoutPath != entry.CheckoutPath {
+			return fmt.Errorf("duplicate trusted mount_path %s claimed by %s and %s", cleanMountPath, previous.RepoRef, entry.RepoRef)
+		}
+		entry.MountPath = cleanMountPath
+		seenMountPaths[cleanMountPath] = *entry
+	}
+	for i := range manifest.External {
+		manifest.External[i].Backend = ""
+	}
+	return nil
+}
+
+func isSupportedAttachmentBackend(backend AttachmentBackend) bool {
+	switch backend {
+	case AttachmentBackendSymlink, AttachmentBackendLinuxNativeBind, AttachmentBackendLinuxFuseBind, AttachmentBackendMacOSFuseBind:
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *Manifest) Upsert(entry Entry) {

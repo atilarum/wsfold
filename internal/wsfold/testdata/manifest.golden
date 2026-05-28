@@ -4,6 +4,7 @@ trusted:
     - repo_ref: acme/service
       checkout_path: /trusted/acme/service
       trust_class: trusted
+      backend: symlink
       mount_path: {{PRIMARY_ROOT}}/service
 external:
     - repo_ref: legacy/tool
