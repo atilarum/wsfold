@@ -16,9 +16,7 @@ test:
 	$(MAKE) native-bind-e2e
 
 native-bind-e2e:
-	mkdir -p dist
-	$(GO_BUILD) -o dist/$(PROJECT_NAME)-native-bind-e2e ./cmd/wsfold
-	WSFOLD_E2E_BINARY=dist/$(PROJECT_NAME)-native-bind-e2e bash ./scripts/native-bind-e2e.sh
+	bash ./scripts/native-bind-e2e.sh
 
 build:
 	mkdir -p dist

@@ -6,8 +6,6 @@ skip() {
   exit 0
 }
 
-bin="${WSFOLD_E2E_BINARY:-dist/wsfold-native-bind-e2e}"
-[ -x "$bin" ] || skip "built wsfold test binary is missing at $bin"
 command -v docker >/dev/null 2>&1 || skip "docker command is unavailable"
 docker info >/dev/null 2>&1 || skip "docker daemon is unavailable or not reachable"
 
@@ -18,7 +16,7 @@ fi
 
 docker_args=(--rm --cap-add SYS_ADMIN \
   -e WSFOLD_NATIVE_BIND_E2E=1 \
-  -e WSFOLD_E2E_WSFOLD_BINARY=/workspace/wsfold/dist/wsfold-native-bind-e2e)
+  -e WSFOLD_E2E_WSFOLD_BINARY=/usr/local/bin/wsfold)
 
 if [ "${WSFOLD_E2E_REPO_MOUNT:-0}" = "1" ]; then
   docker_args+=(-v "$(pwd):/workspace/wsfold" -w /workspace/wsfold)
