@@ -16,11 +16,11 @@ var (
 
 func preflightFuseBind(runner Runner, manifest Manifest, entry Entry) error {
 	if currentGOOS != "linux" {
-		return fmt.Errorf("%s is only supported on Linux; use the default symlink backend on this platform", AttachmentBackendLinuxFuseBind)
+		return fmt.Errorf("%s is only supported on Linux", AttachmentBackendLinuxFuseBind)
 	}
 	for _, name := range []string{"bindfs", "fusermount3"} {
 		if !runner.HasCommand(name) {
-			return fmt.Errorf("%s requires command %q; install FUSE3 and bindfs or use WSFOLD_MOUNT_BACKEND=symlink", AttachmentBackendLinuxFuseBind, name)
+			return fmt.Errorf("%s requires command %q; install FUSE3 and bindfs", AttachmentBackendLinuxFuseBind, name)
 		}
 	}
 	if err := validateFuseDevice(fuseDevicePath); err != nil {
@@ -36,10 +36,10 @@ func validateFuseDevice(path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("%s requires a usable %s FUSE device; expose /dev/fuse in containers or use WSFOLD_MOUNT_BACKEND=symlink", AttachmentBackendLinuxFuseBind, path)
+			return fmt.Errorf("%s requires a usable %s FUSE device; expose /dev/fuse in containers", AttachmentBackendLinuxFuseBind, path)
 		}
 		if os.IsPermission(err) {
-			return fmt.Errorf("%s cannot access %s; check FUSE permissions or use WSFOLD_MOUNT_BACKEND=symlink: %w", AttachmentBackendLinuxFuseBind, path, err)
+			return fmt.Errorf("%s cannot access %s; check FUSE permissions: %w", AttachmentBackendLinuxFuseBind, path, err)
 		}
 		return fmt.Errorf("stat %s FUSE device %s: %w", AttachmentBackendLinuxFuseBind, path, err)
 	}
@@ -96,7 +96,7 @@ func attachFuseBind(runner Runner, entry Entry) error {
 	}
 	if _, err := runner.Command("", "bindfs", "--no-allow-other", entry.CheckoutPath, entry.MountPath); err != nil {
 		cleanupFuseBindTarget(entry.MountPath)
-		return fmt.Errorf("bindfs --no-allow-other %s %s failed: %w; if this is a container, expose /dev/fuse and add CAP_SYS_ADMIN, or use WSFOLD_MOUNT_BACKEND=symlink or linux-native-bind when appropriate", entry.CheckoutPath, entry.MountPath, err)
+		return fmt.Errorf("bindfs --no-allow-other %s %s failed: %w; if this is a container, expose /dev/fuse and add CAP_SYS_ADMIN", entry.CheckoutPath, entry.MountPath, err)
 	}
 	return nil
 }

@@ -8,7 +8,7 @@ export WSFOLD_MOUNT_BACKEND=linux-fuse-bind
 
 Supported values for `WSFOLD_MOUNT_BACKEND` are:
 
-- `symlink` - default behavior and the simplest backout path.
+- `symlink` - default behavior.
 - `linux-fuse-bind` - Linux host backend using `bindfs --no-allow-other` and `fusermount3 -u`.
 - `linux-native-bind` - Linux devcontainer backend using `sudo mount --bind` and `sudo umount`.
 
@@ -55,14 +55,14 @@ services:
       - SYS_ADMIN
 ```
 
-Do not use `--privileged` for this backend. If the container cannot expose FUSE cleanly, use the default `symlink` backend or the `linux-native-bind` devcontainer backend when its explicit `sudo mount --bind` prerequisites match your environment.
+Do not use `--privileged` for this backend. If the container cannot expose FUSE cleanly, the `linux-fuse-bind` backend cannot run there; the `linux-native-bind` devcontainer backend is a separate option when its explicit `sudo mount --bind` prerequisites match your environment.
 
 ## Troubleshooting
 
 - Missing `bindfs`: install the `bindfs` package.
 - Missing `fusermount3`: install FUSE3 tools.
 - Missing `/dev/fuse`: enable FUSE on the Linux host, or pass `/dev/fuse` into a container that intentionally uses this backend.
-- Blocked FUSE in a container: add `--device /dev/fuse` and `--cap-add=SYS_ADMIN`, or use `symlink` or `linux-native-bind` where appropriate.
+- Blocked FUSE in a container: add `--device /dev/fuse` and `--cap-add=SYS_ADMIN`; `linux-native-bind` is a separate devcontainer backend when its prerequisites match your environment.
 - Duplicate target path: dismiss the existing attachment or change `WSFOLD_PROJECTS_DIR` so each trusted repository gets a distinct `mount_path`.
 - Stale mountpoint: inspect the target and run `fusermount3 -u <mount_path>` if it is the expected WSFold bindfs mount.
 - Busy mountpoint: close terminals, editors, file watchers, and processes using `<mount_path>`, then rerun `wsfold dismiss`.
