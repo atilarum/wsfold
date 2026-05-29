@@ -77,6 +77,164 @@ func TestSummonExistingTrustedRepo(t *testing.T) {
 	}
 }
 
+func TestSummonRecoversDeclaredSymlinkAttachment(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	h.RunGit(repoPath, "remote", "add", "origin", "https://github.com/acme/service.git")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("initial Summon returned error: %v", err)
+	}
+
+	link := filepath.Join(h.Workspace, "service")
+	if err := os.Remove(link); err != nil {
+		t.Fatalf("remove managed symlink: %v", err)
+	}
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "linux-native-bind")
+	if err := app.Summon(h.Workspace, "acme/service"); err != nil {
+		t.Fatalf("recovery Summon returned error: %v", err)
+	}
+	target, err := os.Readlink(link)
+	if err != nil {
+		t.Fatalf("read recovered symlink: %v", err)
+	}
+	if target != repoPath {
+		t.Fatalf("expected recovered symlink target %s, got %s", repoPath, target)
+	}
+	manifest, err := loadManifest(h.Workspace)
+	if err != nil {
+		t.Fatalf("loadManifest returned error: %v", err)
+	}
+	if len(manifest.Trusted) != 1 || manifest.Trusted[0].Backend != AttachmentBackendSymlink {
+		t.Fatalf("recovery should preserve recorded backend, got %#v", manifest.Trusted)
+	}
+}
+
+func TestSummonReplacesWrongDeclaredSymlinkTarget(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	wrongPath := filepath.Join(h.TrustedRoot, "wrong")
+	h.InitRepo(repoPath)
+	h.InitRepo(wrongPath)
+	h.RunGit(repoPath, "remote", "add", "origin", "https://github.com/acme/service.git")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("initial Summon returned error: %v", err)
+	}
+	link := filepath.Join(h.Workspace, "service")
+	if err := os.Remove(link); err != nil {
+		t.Fatalf("remove managed symlink: %v", err)
+	}
+	if err := os.Symlink(wrongPath, link); err != nil {
+		t.Fatalf("create wrong symlink: %v", err)
+	}
+
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("recovery Summon returned error: %v", err)
+	}
+	target, err := os.Readlink(link)
+	if err != nil {
+		t.Fatalf("read recovered symlink: %v", err)
+	}
+	if target != repoPath {
+		t.Fatalf("expected recovered symlink target %s, got %s", repoPath, target)
+	}
+}
+
+func TestSummonRefusesInvalidDeclaredAttachment(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	h.RunGit(repoPath, "remote", "add", "origin", "https://github.com/acme/service.git")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("initial Summon returned error: %v", err)
+	}
+	link := filepath.Join(h.Workspace, "service")
+	if err := os.Remove(link); err != nil {
+		t.Fatalf("remove managed symlink: %v", err)
+	}
+	if err := os.Mkdir(link, 0o755); err != nil {
+		t.Fatalf("mkdir occupied target: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(link, "user.txt"), []byte("user data\n"), 0o644); err != nil {
+		t.Fatalf("write occupied target: %v", err)
+	}
+
+	err := app.Summon(h.Workspace, "service")
+	if err == nil || !strings.Contains(err.Error(), "invalid") {
+		t.Fatalf("expected invalid recovery refusal, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(link, "user.txt")); statErr != nil {
+		t.Fatalf("user content should be preserved: %v", statErr)
+	}
+}
+
+func TestSummonAllRecoversIndependentEntriesAndReportsInvalid(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	for _, name := range []string{"service", "worker"} {
+		repoPath := filepath.Join(h.TrustedRoot, name)
+		h.InitRepo(repoPath)
+		h.RunGit(repoPath, "remote", "add", "origin", "https://github.com/acme/"+name+".git")
+	}
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("Summon service returned error: %v", err)
+	}
+	if err := app.Summon(h.Workspace, "worker"); err != nil {
+		t.Fatalf("Summon worker returned error: %v", err)
+	}
+	if err := os.Remove(filepath.Join(h.Workspace, "service")); err != nil {
+		t.Fatalf("remove service symlink: %v", err)
+	}
+	workerLink := filepath.Join(h.Workspace, "worker")
+	if err := os.Remove(workerLink); err != nil {
+		t.Fatalf("remove worker symlink: %v", err)
+	}
+	if err := os.Mkdir(workerLink, 0o755); err != nil {
+		t.Fatalf("mkdir invalid worker path: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(workerLink, "user.txt"), []byte("user data\n"), 0o644); err != nil {
+		t.Fatalf("write invalid worker path: %v", err)
+	}
+
+	err := app.SummonAll(h.Workspace)
+	if err == nil || !strings.Contains(err.Error(), "invalid") {
+		t.Fatalf("expected summon-all invalid summary error, got %v", err)
+	}
+	serviceTarget, readErr := os.Readlink(filepath.Join(h.Workspace, "service"))
+	if readErr != nil {
+		t.Fatalf("service should be recovered despite worker invalid state: %v", readErr)
+	}
+	if serviceTarget != filepath.Join(h.TrustedRoot, "service") {
+		t.Fatalf("unexpected service symlink target: %s", serviceTarget)
+	}
+	if _, statErr := os.Stat(filepath.Join(workerLink, "user.txt")); statErr != nil {
+		t.Fatalf("invalid worker content should be preserved: %v", statErr)
+	}
+}
+
 func TestSummonRejectsUnsupportedMountBackend(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnv(t, h)
@@ -540,6 +698,99 @@ func TestWorktreeCreatesAndAttachesExistingLocalBranch(t *testing.T) {
 	}
 	if !strings.Contains(string(manifestBytes), "managed_worktrees:") || !strings.Contains(string(manifestBytes), "repo_ref: acme/service/feature/worktree\n") {
 		t.Fatalf("expected managed worktree manifest entry, got:\n%s", string(manifestBytes))
+	}
+}
+
+func TestWorktreeRecoversUnavailablePrimaryBeforeCreatingWorktree(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	base := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(base)
+	h.RunGit(base, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.RunGit(base, "branch", "feature/worktree")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("Summon primary returned error: %v", err)
+	}
+	if err := os.Remove(filepath.Join(h.Workspace, "service")); err != nil {
+		t.Fatalf("remove primary symlink: %v", err)
+	}
+
+	if err := app.Worktree(h.Workspace, "service", "feature/worktree", WorktreeOptions{}); err != nil {
+		t.Fatalf("Worktree should recover primary before creating worktree, got error: %v", err)
+	}
+	if target, err := os.Readlink(filepath.Join(h.Workspace, "service")); err != nil || target != base {
+		t.Fatalf("expected primary symlink recovered to %s, got %q err=%v", base, target, err)
+	}
+	worktreePath := filepath.Join(h.Workspace, "service-feature-worktree")
+	if _, err := os.Stat(filepath.Join(worktreePath, ".git")); err != nil {
+		t.Fatalf("expected worktree created after primary recovery: %v", err)
+	}
+}
+
+func TestSummonRecoversManagedWorktreePrimaryAttachment(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	base := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(base)
+	h.RunGit(base, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.RunGit(base, "branch", "feature/worktree")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Worktree(h.Workspace, "service", "feature/worktree", WorktreeOptions{}); err != nil {
+		t.Fatalf("Worktree returned error: %v", err)
+	}
+	if err := os.Remove(filepath.Join(h.Workspace, "service")); err != nil {
+		t.Fatalf("remove primary symlink: %v", err)
+	}
+
+	if err := app.Summon(h.Workspace, "acme/service/feature/worktree"); err != nil {
+		t.Fatalf("Summon managed worktree returned error: %v", err)
+	}
+	if _, err := os.Readlink(filepath.Join(h.Workspace, "service")); err != nil {
+		t.Fatalf("expected primary symlink recovered: %v", err)
+	}
+	worktreePath := filepath.Join(h.Workspace, "service-feature-worktree")
+	if status := h.RunGit(worktreePath, "status", "--short"); strings.TrimSpace(status) != "" {
+		t.Fatalf("expected recovered worktree to be git-usable and clean, got %q", status)
+	}
+}
+
+func TestSummonRecreatesMissingManagedWorktree(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	base := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(base)
+	h.RunGit(base, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.RunGit(base, "branch", "feature/worktree")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Worktree(h.Workspace, "service", "feature/worktree", WorktreeOptions{}); err != nil {
+		t.Fatalf("Worktree returned error: %v", err)
+	}
+	worktreePath := filepath.Join(h.Workspace, "service-feature-worktree")
+	if err := os.RemoveAll(worktreePath); err != nil {
+		t.Fatalf("remove managed worktree directory: %v", err)
+	}
+
+	if err := app.Summon(h.Workspace, "acme/service/feature/worktree"); err != nil {
+		t.Fatalf("Summon managed worktree returned error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(worktreePath, ".git")); err != nil {
+		t.Fatalf("expected managed worktree recreated: %v", err)
+	}
+	if branch := h.RunGit(worktreePath, "branch", "--show-current"); strings.TrimSpace(branch) != "feature/worktree" {
+		t.Fatalf("expected recovered branch, got %q", branch)
 	}
 }
 
@@ -1605,6 +1856,7 @@ func setEnv(t *testing.T, h *testutil.Harness) {
 		t.Setenv(key, value)
 	}
 	t.Setenv("WSFOLD_PROJECTS_DIR", ".")
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "symlink")
 }
 
 func setEnvWithProjectsDir(t *testing.T, h *testutil.Harness, projectsDir string) {
@@ -1614,6 +1866,7 @@ func setEnvWithProjectsDir(t *testing.T, h *testutil.Harness, projectsDir string
 		t.Setenv(key, value)
 	}
 	t.Setenv("WSFOLD_PROJECTS_DIR", projectsDir)
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "symlink")
 }
 
 func TestSummonCustomProjectsDirStillMountsUnderSubdir(t *testing.T) {

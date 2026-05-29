@@ -1,6 +1,7 @@
 package wsfold
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -260,6 +261,44 @@ func TestCompleteDismissUsesBranchRefForWorktreeEntries(t *testing.T) {
 	}
 }
 
+func TestWorktreeSourcePickerIncludesUnmountedManagedWorktreeRecoveryTarget(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setCompletionEnv(t, h)
+	initWorkspace(t, h)
+
+	base := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(base)
+	h.RunGit(base, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.RunGit(base, "branch", "feature/worktree")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Worktree(h.Workspace, "service", "feature/worktree", WorktreeOptions{}); err != nil {
+		t.Fatalf("Worktree returned error: %v", err)
+	}
+	if err := os.Remove(filepath.Join(h.Workspace, "service")); err != nil {
+		t.Fatalf("remove primary symlink: %v", err)
+	}
+
+	state, err := app.WorktreeSourcePickerState(h.Workspace)
+	if err != nil {
+		t.Fatalf("WorktreeSourcePickerState returned error: %v", err)
+	}
+	var managed CompletionCandidate
+	for _, candidate := range state.Candidates {
+		if candidate.Value == "acme/service/feature/worktree" {
+			managed = candidate
+			break
+		}
+	}
+	if managed.Value == "" {
+		t.Fatalf("expected managed worktree candidate, got %#v", state.Candidates)
+	}
+	if managed.Disabled || managed.Realization != RealizationUnmounted {
+		t.Fatalf("expected unmounted managed worktree to be selectable, got %#v", managed)
+	}
+}
+
 func TestTrustedSummonPickerStateMergesCachedRemoteReposAndPrefersLocal(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setCompletionEnv(t, h)
@@ -333,4 +372,5 @@ func setCompletionEnv(t *testing.T, h *testutil.Harness) {
 		t.Setenv(key, value)
 	}
 	t.Setenv("WSFOLD_PROJECTS_DIR", ".")
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "symlink")
 }

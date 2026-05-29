@@ -350,6 +350,9 @@ func (m pickerModel) isReadOnlyAttached(candidate wsfold.CompletionCandidate) bo
 	if !candidate.Attached {
 		return false
 	}
+	if candidate.Realization == wsfold.RealizationUnmounted {
+		return false
+	}
 	return m.command == "summon" || m.command == "summon-external"
 }
 
@@ -589,6 +592,9 @@ func pickerSearchText(candidate wsfold.CompletionCandidate, command string) stri
 	if branch := strings.TrimSpace(pickerBranchText(candidate, command)); branch != "" {
 		parts = append(parts, branch)
 	}
+	if status := strings.TrimSpace(string(candidate.Realization)); status != "" {
+		parts = append(parts, status)
+	}
 	if candidate.IsWorktree && command != "worktree-branch" {
 		parts = append(parts, "worktree")
 		if branch := strings.TrimSpace(candidate.Branch); branch != "" {
@@ -742,10 +748,16 @@ func pickerSourceLabel(candidate wsfold.CompletionCandidate, command string) str
 		return "free"
 	}
 	if candidate.Attached && command == "summon" {
+		if candidate.Realization == wsfold.RealizationUnmounted || candidate.Realization == wsfold.RealizationInvalid {
+			return string(candidate.Realization)
+		}
 		return "attached"
 	}
 	if candidate.Attached && command == "summon-external" {
 		return "added"
+	}
+	if candidate.Realization == wsfold.RealizationUnmounted || candidate.Realization == wsfold.RealizationInvalid {
+		return string(candidate.Realization)
 	}
 	if command == "dismiss" {
 		switch candidate.TrustClass {
@@ -769,6 +781,18 @@ func renderSourceMarkerText(candidate wsfold.CompletionCandidate, command string
 		return localStyle.Render(text)
 	}
 	if candidate.Attached && (command == "summon" || command == "summon-external") {
+		if candidate.Realization == wsfold.RealizationUnmounted {
+			return localStyle.Render(text)
+		}
+		if candidate.Realization == wsfold.RealizationInvalid {
+			return attachedStyle.Render(text)
+		}
+		return attachedStyle.Render(text)
+	}
+	if candidate.Realization == wsfold.RealizationUnmounted {
+		return localStyle.Render(text)
+	}
+	if candidate.Realization == wsfold.RealizationInvalid {
 		return attachedStyle.Render(text)
 	}
 	if command == "dismiss" {

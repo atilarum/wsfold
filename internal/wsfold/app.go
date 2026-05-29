@@ -44,6 +44,67 @@ func (a *App) Summon(cwd string, ref string) error {
 	return a.summon(cwd, ref, TrustClassTrusted)
 }
 
+func (a *App) SummonAll(cwd string) error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+	primaryRoot, err := resolveWorkspaceRoot(cwd)
+	if err != nil {
+		return err
+	}
+	manifest, err := loadManifest(primaryRoot)
+	if err != nil {
+		return err
+	}
+	if len(manifest.Trusted) == 0 && len(manifest.ManagedWorktrees) == 0 {
+		_, _ = fmt.Fprintln(a.Stdout, "Nothing to reconcile")
+		return nil
+	}
+
+	var attached, recovered, invalid, failed int
+	for _, entry := range manifest.Trusted {
+		status, err := a.reconcileTrustedEntry(primaryRoot, cfg, manifest, entry)
+		switch {
+		case err != nil:
+			failed++
+			_, _ = fmt.Fprintf(a.Stdout, "%s failed: %s: %v\n", ansiRedBold+"✗"+ansiReset, entry.RepoRef, err)
+		case status == RealizationAttached:
+			attached++
+		case status == RealizationUnmounted:
+			recovered++
+		case status == RealizationInvalid:
+			invalid++
+		}
+		if current, loadErr := loadManifest(primaryRoot); loadErr == nil {
+			manifest = current
+		}
+	}
+	for _, entry := range manifest.ManagedWorktrees {
+		status, err := a.reconcileManagedWorktree(primaryRoot, cfg, manifest, entry)
+		switch {
+		case err != nil:
+			failed++
+			_, _ = fmt.Fprintf(a.Stdout, "%s failed: %s: %v\n", ansiRedBold+"✗"+ansiReset, entry.RepoRef, err)
+		case status == RealizationAttached:
+			attached++
+		case status == RealizationUnmounted:
+			recovered++
+		case status == RealizationInvalid:
+			invalid++
+		}
+		if current, loadErr := loadManifest(primaryRoot); loadErr == nil {
+			manifest = current
+		}
+	}
+
+	_, _ = fmt.Fprintf(a.Stdout, "Reconciliation complete: %d attached, %d recovered, %d invalid, %d failed\n", attached, recovered, invalid, failed)
+	if invalid > 0 || failed > 0 {
+		return fmt.Errorf("workspace reconciliation completed with %d invalid and %d failed entries", invalid, failed)
+	}
+	return nil
+}
+
 func (a *App) SummonUntrusted(cwd string, ref string) error {
 	return a.summon(cwd, ref, TrustClassExternal)
 }
@@ -111,6 +172,40 @@ func (a *App) summon(cwd string, ref string, requested TrustClass) error {
 		return err
 	}
 
+	manifest, err := loadManifest(primaryRoot)
+	if err != nil {
+		return err
+	}
+	if requested == TrustClassTrusted {
+		if worktree, ok, err := resolveManagedWorktreeEntry(manifest, ref); err != nil {
+			return err
+		} else if ok {
+			status, err := a.reconcileManagedWorktree(primaryRoot, cfg, manifest, worktree)
+			if err != nil {
+				return err
+			}
+			if status == RealizationInvalid {
+				return fmt.Errorf("managed worktree %q is invalid and cannot be recovered automatically", ref)
+			}
+			return nil
+		}
+		if _, _, _, ok := splitSlugWithBranch(ref); ok {
+			return fmt.Errorf("summon does not attach unmanaged Git worktrees; create managed task worktrees with `wsfold worktree`")
+		}
+		if entry, ok, err := resolveTrustedManifestEntry(manifest, ref, a.Runner); err != nil {
+			return err
+		} else if ok {
+			status, err := a.reconcileTrustedEntry(primaryRoot, cfg, manifest, entry)
+			if err != nil {
+				return err
+			}
+			if status == RealizationInvalid {
+				return fmt.Errorf("trusted repository %q is invalid and cannot be recovered automatically", ref)
+			}
+			return nil
+		}
+	}
+
 	repo, err := findOrCloneRepo(cfg, a.Runner, a.Stdout, ref, requested)
 	if err != nil {
 		return err
@@ -120,6 +215,53 @@ func (a *App) summon(cwd string, ref string, requested TrustClass) error {
 	}
 
 	return a.attachRepo(primaryRoot, cfg, repo, requested)
+}
+
+func (a *App) RecoverManagedWorktree(cwd string, ref string) error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+	primaryRoot, err := resolveWorkspaceRoot(cwd)
+	if err != nil {
+		return err
+	}
+	manifest, err := loadManifest(primaryRoot)
+	if err != nil {
+		return err
+	}
+	entry, ok, err := resolveManagedWorktreeEntry(manifest, ref)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("managed worktree %q is not part of the current workspace composition", ref)
+	}
+	status, err := a.reconcileManagedWorktree(primaryRoot, cfg, manifest, entry)
+	if err != nil {
+		return err
+	}
+	if status == RealizationInvalid {
+		return fmt.Errorf("managed worktree %q is invalid and cannot be recovered automatically", ref)
+	}
+	return nil
+}
+
+func (a *App) IsManagedWorktreeRecoveryTarget(cwd string, ref string) (bool, error) {
+	primaryRoot, err := resolveWorkspaceRoot(cwd)
+	if err != nil {
+		return false, err
+	}
+	manifest, err := loadManifest(primaryRoot)
+	if err != nil {
+		return false, err
+	}
+	entry, ok, err := resolveManagedWorktreeEntry(manifest, ref)
+	if err != nil || !ok {
+		return false, err
+	}
+	realization := InspectManagedWorktreeRealization(manifest, entry, a.Runner)
+	return realization.Status == RealizationUnmounted, nil
 }
 
 func (a *App) Worktree(cwd string, ref string, branch string, opts WorktreeOptions) error {
@@ -212,7 +354,24 @@ func (a *App) ensurePrimaryAttachmentForWorktree(primaryRoot string, cfg Config,
 	}
 	if entry, ok := findPrimaryAttachmentForSource(manifest, source.Repo); ok {
 		if !isGitRepo(entry.MountPath) {
-			return Entry{}, Manifest{}, fmt.Errorf("primary repository %s is declared but unavailable at %s; summon or repair it before creating a worktree", entry.RepoRef, entry.MountPath)
+			status, err := a.reconcileTrustedEntry(primaryRoot, cfg, manifest, entry)
+			if err != nil {
+				return Entry{}, Manifest{}, err
+			}
+			if status == RealizationInvalid {
+				return Entry{}, Manifest{}, fmt.Errorf("primary repository %s is invalid and cannot be recovered automatically", entry.RepoRef)
+			}
+			manifest, err = loadManifest(primaryRoot)
+			if err != nil {
+				return Entry{}, Manifest{}, err
+			}
+			entry, ok = findPrimaryAttachmentForSource(manifest, source.Repo)
+			if !ok {
+				return Entry{}, Manifest{}, fmt.Errorf("primary repository %s was not available after recovery", source.DisplayRef())
+			}
+			if !isGitRepo(entry.MountPath) {
+				return Entry{}, Manifest{}, fmt.Errorf("primary repository %s is still unavailable at %s after recovery", entry.RepoRef, entry.MountPath)
+			}
 		}
 		return entry, manifest, nil
 	}
@@ -251,6 +410,11 @@ func findPrimaryAttachmentForSource(manifest Manifest, source Repo) (Entry, bool
 		}
 	}
 	return Entry{}, false
+}
+
+func resolveTrustedManifestEntry(manifest Manifest, ref string, runner Runner) (Entry, bool, error) {
+	trustedOnly := Manifest{Trusted: append([]Entry(nil), manifest.Trusted...)}
+	return resolveManifestEntry(trustedOnly, ref, runner)
 }
 
 func managedWorktreeRepoRef(primaryRef string, source WorktreeSource, branch string) string {
@@ -320,6 +484,157 @@ func (a *App) attachRepo(primaryRoot string, cfg Config, repo Repo, requested Tr
 	}
 
 	_, _ = fmt.Fprintln(a.Stdout, formatSummonSuccess(requested, repo, entry, primaryRoot))
+	return nil
+}
+
+func (a *App) reconcileTrustedEntry(primaryRoot string, cfg Config, manifest Manifest, entry Entry) (RealizationStatus, error) {
+	realization := InspectAttachmentRealization(entry)
+	switch realization.Status {
+	case RealizationAttached:
+		_, _ = fmt.Fprintf(a.Stdout, "%s Trusted repository already attached: %s\n", ansiGreenBold+"✓"+ansiReset, ansiCyanBold+entry.RepoRef+ansiReset)
+		return RealizationAttached, nil
+	case RealizationInvalid:
+		_, _ = fmt.Fprintf(a.Stdout, "%s Trusted repository invalid: %s (%s)\n", ansiRedBold+"✗"+ansiReset, ansiCyanBold+entry.RepoRef+ansiReset, realization.Reason)
+		return RealizationInvalid, nil
+	case RealizationUnmounted:
+		if err := a.recoverTrustedEntry(primaryRoot, cfg, manifest, entry); err != nil {
+			return RealizationUnmounted, err
+		}
+		_, _ = fmt.Fprintf(a.Stdout, "%s Trusted repository recovered: %s\n", ansiGreenBold+"✓"+ansiReset, ansiCyanBold+entry.RepoRef+ansiReset)
+		return RealizationUnmounted, nil
+	default:
+		return RealizationInvalid, fmt.Errorf("unknown realization status %q for %s", realization.Status, entry.RepoRef)
+	}
+}
+
+func (a *App) recoverTrustedEntry(primaryRoot string, cfg Config, manifest Manifest, entry Entry) error {
+	previous := cloneManifest(manifest)
+	backend := entry.Backend
+	if backend == "" {
+		backend = AttachmentBackendSymlink
+	}
+	switch backend {
+	case AttachmentBackendSymlink:
+		if err := ensureTrustedSymlink(entry.MountPath, entry.CheckoutPath); err != nil {
+			return err
+		}
+	case AttachmentBackendLinuxNativeBind:
+		if err := prepareMountResidueForRecovery(entry.MountPath); err != nil {
+			return err
+		}
+		if err := nativeBindPreflight(a.Runner, manifest, entry); err != nil {
+			return err
+		}
+		if err := nativeBindAttach(a.Runner, entry); err != nil {
+			return err
+		}
+	case AttachmentBackendLinuxFuseBind:
+		if err := prepareMountResidueForRecovery(entry.MountPath); err != nil {
+			return err
+		}
+		if err := fuseBindPreflight(a.Runner, manifest, entry); err != nil {
+			return err
+		}
+		if err := fuseBindAttach(a.Runner, entry); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("trusted attachment backend %s is not implemented for recovery", backend)
+	}
+	if err := writeWorkspace(primaryRoot, previous, manifest, cfg.ProjectsDirName); err != nil {
+		return err
+	}
+	return nil
+}
+
+func prepareMountResidueForRecovery(path string) error {
+	if _, err := os.Lstat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat mount path %s: %w", path, err)
+	}
+	empty, err := isEmptyDirectory(path)
+	if err != nil {
+		return fmt.Errorf("inspect mount residue %s: %w", path, err)
+	}
+	if !empty {
+		return nil
+	}
+	if err := os.Remove(path); err != nil {
+		return fmt.Errorf("remove empty mount residue %s: %w", path, err)
+	}
+	return nil
+}
+
+func (a *App) reconcileManagedWorktree(primaryRoot string, cfg Config, manifest Manifest, entry ManagedWorktreeEntry) (RealizationStatus, error) {
+	realization := InspectManagedWorktreeRealization(manifest, entry, a.Runner)
+	switch realization.Status {
+	case RealizationAttached:
+		_, _ = fmt.Fprintf(a.Stdout, "%s Managed worktree already attached: %s\n", ansiGreenBold+"✓"+ansiReset, ansiCyanBold+entry.RepoRef+ansiReset)
+		return RealizationAttached, nil
+	case RealizationInvalid:
+		_, _ = fmt.Fprintf(a.Stdout, "%s Managed worktree invalid: %s (%s)\n", ansiRedBold+"✗"+ansiReset, ansiCyanBold+entry.RepoRef+ansiReset, realization.Reason)
+		return RealizationInvalid, nil
+	case RealizationUnmounted:
+		if err := a.recoverManagedWorktree(primaryRoot, cfg, manifest, entry, realization); err != nil {
+			return RealizationUnmounted, err
+		}
+		_, _ = fmt.Fprintf(a.Stdout, "%s Managed worktree recovered: %s\n", ansiGreenBold+"✓"+ansiReset, ansiCyanBold+entry.RepoRef+ansiReset)
+		return RealizationUnmounted, nil
+	default:
+		return RealizationInvalid, fmt.Errorf("unknown realization status %q for %s", realization.Status, entry.RepoRef)
+	}
+}
+
+func (a *App) recoverManagedWorktree(primaryRoot string, cfg Config, manifest Manifest, entry ManagedWorktreeEntry, realization ManagedWorktreeRealization) error {
+	previous := cloneManifest(manifest)
+	if realization.Inspection.State == ManagedWorktreePrimaryUnavailable && realization.Inspection.PrimaryEntry.MountPath != "" {
+		if _, err := a.reconcileTrustedEntry(primaryRoot, cfg, manifest, realization.Inspection.PrimaryEntry); err != nil {
+			return err
+		}
+		var err error
+		manifest, err = loadManifest(primaryRoot)
+		if err != nil {
+			return err
+		}
+		realization = InspectManagedWorktreeRealization(manifest, entry, a.Runner)
+		if realization.Status == RealizationAttached {
+			return writeWorkspace(primaryRoot, previous, manifest, cfg.ProjectsDirName)
+		}
+	}
+	if realization.Inspection.State != ManagedWorktreeMissing {
+		return fmt.Errorf("managed worktree %s cannot be recovered automatically: %s", entry.RepoRef, realization.Reason)
+	}
+	primary := realization.Inspection.PrimaryEntry
+	if strings.TrimSpace(primary.MountPath) == "" {
+		if found, ok := findPrimaryEntryForManagedWorktree(manifest, entry); ok {
+			primary = found
+		}
+	}
+	if !isGitRepo(primary.MountPath) {
+		return fmt.Errorf("primary repository attachment is not available at %s", primary.MountPath)
+	}
+	if _, err := a.Runner.Git(primary.MountPath, "worktree", "prune"); err != nil {
+		return fmt.Errorf("prune stale worktree metadata before recovery: %w", err)
+	}
+	branchMap, err := listLocalBranches(a.Runner, primary.MountPath)
+	if err != nil {
+		return err
+	}
+	sourceRef := strings.TrimSpace(branchMap[entry.Branch])
+	if sourceRef == "" {
+		return fmt.Errorf("managed worktree branch %q was not found in primary repository", entry.Branch)
+	}
+	if err := createGitWorktree(a.Runner, primary.MountPath, entry.WorkspacePath, entry.Branch, false, sourceRef); err != nil {
+		return err
+	}
+	if _, _, err := validateManagedWorktreeControlPath(entry, primary); err != nil {
+		return fmt.Errorf("recovered worktree did not satisfy workspace-local control path contract: %w", err)
+	}
+	if err := writeWorkspace(primaryRoot, previous, manifest, cfg.ProjectsDirName); err != nil {
+		return err
+	}
 	return nil
 }
 

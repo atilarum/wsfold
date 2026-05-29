@@ -253,6 +253,42 @@ func TestPickerModelEnterDoesNothingForAttachedSummonRowInSingleMode(t *testing.
 	}
 }
 
+func TestPickerModelSelectsUnmountedSummonRowAndSearchesStatus(t *testing.T) {
+	model := newPickerModel("summon", []wsfold.CompletionCandidate{
+		{Value: "alpha", Name: "alpha", Attached: true, Realization: wsfold.RealizationAttached},
+		{Value: "beta", Name: "beta", Attached: true, Realization: wsfold.RealizationUnmounted},
+	})
+	for _, r := range "unmounted" {
+		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		model = updated.(pickerModel)
+	}
+	if len(model.filtered) != 1 || model.filtered[0].candidate.Value != "beta" {
+		t.Fatalf("expected status search to find unmounted row, got %#v", model.filtered)
+	}
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(pickerModel)
+	if cmd == nil {
+		t.Fatalf("expected enter to quit for selectable unmounted row")
+	}
+	if got := model.selectedValues(); len(got) != 1 || got[0] != "beta" {
+		t.Fatalf("expected unmounted row selection, got %#v", got)
+	}
+}
+
+func TestPickerModelDoesNotSelectInvalidSummonRow(t *testing.T) {
+	model := newPickerModel("summon", []wsfold.CompletionCandidate{
+		{Value: "alpha", Name: "alpha", Attached: true, Realization: wsfold.RealizationInvalid, Disabled: true},
+	})
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(pickerModel)
+	if cmd != nil {
+		t.Fatalf("did not expect enter to quit for invalid row")
+	}
+	if got := model.selectedValues(); len(got) != 0 {
+		t.Fatalf("did not expect invalid row selection, got %#v", got)
+	}
+}
+
 func TestWorktreeSourcePickerStaysSingleSelect(t *testing.T) {
 	model := newPickerModel("worktree-source", []wsfold.CompletionCandidate{
 		{Value: "service", Name: "service"},

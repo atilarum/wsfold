@@ -131,7 +131,7 @@ func writeDynamicCompletions(cwd string, args []string, stdout io.Writer) error 
 	}
 
 	for _, candidate := range candidates {
-		if (command == "summon" || command == "summon-external") && candidate.Attached {
+		if (command == "summon" || command == "summon-external") && candidate.Attached && candidate.Realization != wsfold.RealizationUnmounted {
 			continue
 		}
 		line := candidate.Value

@@ -90,6 +90,7 @@ func TestRunHelp(t *testing.T) {
 
 	usageOrder := []string{
 		"wsfold summon [repo-ref]",
+		"wsfold summon-all",
 		"wsfold summon-external [repo-ref]",
 		"wsfold dismiss [repo-ref]",
 		"wsfold worktree [repo-ref] [branch]",
@@ -111,7 +112,8 @@ func TestRunHelp(t *testing.T) {
 	}
 
 	commandOrder := []string{
-		"summon            attach a trusted repository to the workspace, local or remote",
+		"summon            ensure or recover one trusted repository or managed worktree",
+		"summon-all        reconcile every declared trusted attachment and managed worktree",
 		"summon-external   add an external repository as a workspace root",
 		"dismiss           remove a repository or clean managed worktree from the composition",
 		"worktree          create a workspace-local managed Git worktree",
@@ -273,6 +275,8 @@ func TestRunDynamicCompletionSkipsAlreadyAttachedReposForSummonCommands(t *testi
 		t.Setenv(key, value)
 	}
 	t.Setenv("WSFOLD_PROJECTS_DIR", ".")
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "symlink")
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "symlink")
 
 	trustedRepo := filepath.Join(h.TrustedRoot, "service")
 	h.InitRepo(trustedRepo)
@@ -299,6 +303,16 @@ func TestRunDynamicCompletionSkipsAlreadyAttachedReposForSummonCommands(t *testi
 	}
 	if strings.Contains(summonStdout.String(), "service") {
 		t.Fatalf("did not expect attached summon repo in completion output, got %q", summonStdout.String())
+	}
+	if err := os.Remove(filepath.Join(h.Workspace, "service")); err != nil {
+		t.Fatalf("remove managed symlink: %v", err)
+	}
+	summonStdout.Reset()
+	if err := writeDynamicCompletions(h.Workspace, []string{"__complete", "summon", "se"}, &summonStdout); err != nil {
+		t.Fatalf("writeDynamicCompletions summon after unmount returned error: %v", err)
+	}
+	if !strings.Contains(summonStdout.String(), "service") {
+		t.Fatalf("expected unmounted summon repo to remain in completion output, got %q", summonStdout.String())
 	}
 
 	var externalStdout bytes.Buffer
@@ -356,6 +370,7 @@ func TestResolveCommandRefsDismissWithoutCandidatesIsNoop(t *testing.T) {
 		t.Setenv(key, value)
 	}
 	t.Setenv("WSFOLD_PROJECTS_DIR", ".")
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "symlink")
 
 	app := wsfold.NewApp()
 	if err := app.Init(h.Workspace); err != nil {

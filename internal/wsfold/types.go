@@ -10,6 +10,7 @@ type CompletionSource string
 type AttachmentBackend string
 type WorktreeControlMode string
 type ManagedWorktreeOwner string
+type RealizationStatus string
 
 const (
 	TrustClassTrusted      TrustClass       = "trusted"
@@ -24,6 +25,10 @@ const (
 
 	WorktreeControlWorkspaceMountedPrimary WorktreeControlMode  = "workspace-mounted-primary"
 	ManagedWorktreeOwnerWSFold             ManagedWorktreeOwner = "wsfold"
+
+	RealizationAttached  RealizationStatus = "attached"
+	RealizationUnmounted RealizationStatus = "unmounted"
+	RealizationInvalid   RealizationStatus = "invalid"
 )
 
 type Repo struct {
