@@ -60,10 +60,16 @@ Then it removes only the empty WSFold-managed mount directory and updates the ma
 After a devcontainer restart or mount namespace reset, the manifest can still declare native bind attachments while the runtime mounts are gone. Run:
 
 ```bash
+wsfold status
+```
+
+first when you want read-only diagnostics. Native bind rows reported as `unmounted` are recoverable. Then run:
+
+```bash
 wsfold summon-all
 ```
 
-to restore every recoverable declared attachment and dependent managed worktree. Use `wsfold summon <repo-ref>` to recover one item. WSFold uses the backend recorded in the manifest, so changing `WSFOLD_MOUNT_BACKEND` later does not change how an existing declaration is recovered.
+to restore every recoverable declared attachment and dependent managed worktree. Use `wsfold summon <repo-ref>` to recover one item. WSFold uses the backend recorded in the manifest, so changing `WSFOLD_MOUNT_BACKEND` later does not change how an existing declaration is recovered. Rows reported as `invalid` need manual inspection before retrying because WSFold cannot prove that automatic cleanup is safe.
 
 ## Troubleshooting
 
@@ -73,8 +79,10 @@ to restore every recoverable declared attachment and dependent managed worktree.
 - Duplicate target path: dismiss the existing attachment or change `WSFOLD_PROJECTS_DIR` so each trusted repository gets a distinct `mount_path`.
 - Stale mountpoint: run `sudo umount <mount_path>`, then retry `wsfold dismiss`.
 - Busy mountpoint: close terminals, editors, file watchers, and processes using `<mount_path>`, then rerun `wsfold dismiss`.
-- Disappeared mount after restart: run `wsfold summon-all`. If WSFold reports `invalid`, inspect the target path before moving or deleting anything.
+- Disappeared mount after restart: run `wsfold status` to confirm whether the row is `unmounted` or `invalid`, then run `wsfold summon <repo-ref>` or `wsfold summon-all` for recoverable rows.
 - Occupied target path: WSFold refuses automatic recovery when `<mount_path>` contains unmanaged files. Preserve or move that content manually, then retry.
+- Missing external root: `wsfold status` reports `invalid`; restore the external checkout path or adjust the composition instead of expecting native bind recovery to clone it.
+- Unmounted managed worktree: `wsfold status` reports `unmounted`; run `wsfold summon <worktree-ref>` or `wsfold summon-all`.
 - Failed partial summon: verify the manifest did not gain a new entry, remove any empty managed target directory if needed, and keep the source checkout intact.
 
 ## Manual Backout
