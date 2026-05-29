@@ -13,8 +13,14 @@ import (
 
 const (
 	ansiYellow = "\x1b[33m"
+	ansiGreen  = "\x1b[32m"
+	ansiCyan   = "\x1b[36m"
+	ansiRed    = "\x1b[31m"
 	ansiBold   = "\x1b[1m"
 	ansiReset  = "\x1b[0m"
+
+	statusFolderColumnMax = 28
+	statusBranchColumnMax = 28
 )
 
 func Run(args []string, stdout, stderr io.Writer) error {
@@ -56,6 +62,17 @@ func Run(args []string, stdout, stderr io.Writer) error {
 			return fmt.Errorf("usage: wsfold reindex")
 		}
 		return app.ReindexTrusted()
+	}
+
+	if args[0] == "status" {
+		if len(args) != 1 {
+			return fmt.Errorf("usage: wsfold status")
+		}
+		report, err := app.Status(cwd)
+		if err != nil {
+			return err
+		}
+		return writeStatusReport(stdout, report)
 	}
 
 	switch args[0] {
@@ -106,6 +123,150 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func writeStatusReport(w io.Writer, report wsfold.StatusReport) error {
+	if _, err := fmt.Fprintf(w, "Workspace: %s\n\n", report.WorkspaceRoot); err != nil {
+		return err
+	}
+	if len(report.Rows) == 0 {
+		_, err := fmt.Fprintln(w, "Nothing declared to inspect")
+		return err
+	}
+
+	header := []string{"FOLDER", "TYPE", "STATE", "BRANCH", "REF"}
+	rows := make([][]string, 0, len(report.Rows)+1)
+	rows = append(rows, header)
+	for _, row := range report.Rows {
+		branch := row.Branch
+		if strings.TrimSpace(branch) == "" {
+			branch = "-"
+		}
+		rows = append(rows, []string{
+			compactStatusCell(0, row.Folder),
+			string(row.Kind),
+			string(row.State),
+			compactStatusCell(3, branch),
+			row.Ref,
+		})
+	}
+
+	widths := columnWidths(rows)
+	for rowIndex, row := range rows {
+		for columnIndex, cell := range row {
+			if columnIndex > 0 {
+				if _, err := io.WriteString(w, "  "); err != nil {
+					return err
+				}
+			}
+			display := cell
+			if rowIndex == 0 {
+				display = ansiBold + cell + ansiReset
+			} else {
+				display = colorStatusCell(columnIndex, cell)
+			}
+			if _, err := io.WriteString(w, display); err != nil {
+				return err
+			}
+			if padding := widths[columnIndex] - len(cell); padding > 0 {
+				if _, err := io.WriteString(w, strings.Repeat(" ", padding)); err != nil {
+					return err
+				}
+			}
+		}
+		if _, err := io.WriteString(w, "\n"); err != nil {
+			return err
+		}
+	}
+	if err := writeStatusActions(w, report.Rows); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "\nSummary: %d attached, %d unmounted, %d invalid\n", report.Summary.Attached, report.Summary.Unmounted, report.Summary.Invalid); err != nil {
+		return err
+	}
+	if report.Summary.Unmounted > 1 {
+		if _, err := io.WriteString(w, "Hint: run `wsfold summon-all` to recover all recoverable declared entries.\n"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func compactStatusCell(columnIndex int, cell string) string {
+	switch columnIndex {
+	case 0:
+		return truncateStatusCell(cell, statusFolderColumnMax)
+	case 3:
+		return truncateStatusCell(cell, statusBranchColumnMax)
+	default:
+		return cell
+	}
+}
+
+func truncateStatusCell(cell string, max int) string {
+	if max <= 3 || len(cell) <= max {
+		return cell
+	}
+	return cell[:max-3] + "..."
+}
+
+func writeStatusActions(w io.Writer, rows []wsfold.StatusRow) error {
+	wroteHeader := false
+	for _, row := range rows {
+		if row.State == wsfold.RealizationAttached {
+			continue
+		}
+		action := row.Action
+		if strings.TrimSpace(action) == "" {
+			action = "inspect manually"
+		}
+		if !wroteHeader {
+			if _, err := io.WriteString(w, "\nActions:\n"); err != nil {
+				return err
+			}
+			wroteHeader = true
+		}
+		detail := row.Detail
+		if strings.TrimSpace(detail) == "" {
+			detail = "inspect current state"
+		}
+		if _, err := fmt.Fprintf(w, "  %s: %s (%s)\n", row.Folder, action, detail); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func colorStatusCell(columnIndex int, cell string) string {
+	switch columnIndex {
+	case 1:
+		return ansiCyan + cell + ansiReset
+	case 2:
+		switch cell {
+		case string(wsfold.RealizationAttached):
+			return ansiGreen + cell + ansiReset
+		case string(wsfold.RealizationUnmounted):
+			return ansiYellow + cell + ansiReset
+		case string(wsfold.RealizationInvalid):
+			return ansiRed + cell + ansiReset
+		}
+	}
+	return cell
+}
+
+func columnWidths(rows [][]string) []int {
+	if len(rows) == 0 {
+		return nil
+	}
+	widths := make([]int, len(rows[0]))
+	for _, row := range rows {
+		for i, cell := range row {
+			if len(cell) > widths[i] {
+				widths[i] = len(cell)
+			}
+		}
+	}
+	return widths
 }
 
 type worktreeCLIOptions struct {

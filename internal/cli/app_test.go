@@ -91,6 +91,7 @@ func TestRunHelp(t *testing.T) {
 	usageOrder := []string{
 		"wsfold summon [repo-ref]",
 		"wsfold summon-all",
+		"wsfold status",
 		"wsfold summon-external [repo-ref]",
 		"wsfold dismiss [repo-ref]",
 		"wsfold worktree [repo-ref] [branch]",
@@ -115,6 +116,7 @@ func TestRunHelp(t *testing.T) {
 	commandOrder := []string{
 		"summon            ensure or recover one trusted repository or managed worktree",
 		"summon-all        reconcile every declared trusted attachment and managed worktree",
+		"status            inspect declared workspace health without changing files",
 		"summon-external   add an external repository as a workspace root",
 		"dismiss           remove a repository or clean managed worktree from the composition",
 		"worktree          create a workspace-local managed Git worktree",
@@ -224,6 +226,100 @@ func TestRunInitRejectsExtraArgs(t *testing.T) {
 	}
 }
 
+func TestRunStatusRejectsExtraArgsWithoutWorkspaceInspection(t *testing.T) {
+	t.Parallel()
+
+	err := Run([]string{"status", "extra"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "usage: wsfold status") {
+		t.Fatalf("unexpected status usage error: %v", err)
+	}
+}
+
+func TestRunStatusEmptyWorkspace(t *testing.T) {
+	h := testutil.NewHarness(t)
+	for _, env := range h.Env() {
+		key, value, _ := strings.Cut(env, "=")
+		t.Setenv(key, value)
+	}
+	t.Setenv("WSFOLD_PROJECTS_DIR", ".")
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "symlink")
+
+	app := wsfold.NewApp()
+	if err := app.Init(h.Workspace); err != nil {
+		t.Fatalf("Init returned error: %v", err)
+	}
+	t.Chdir(h.Workspace)
+
+	var stdout bytes.Buffer
+	if err := Run([]string{"status"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run status returned error: %v", err)
+	}
+	output := stdout.String()
+	if !strings.Contains(output, "Workspace: "+h.Workspace) || !strings.Contains(output, "Nothing declared to inspect") {
+		t.Fatalf("unexpected empty status output: %q", output)
+	}
+}
+
+func TestRunStatusMixedRowsFromSubdirectory(t *testing.T) {
+	h := testutil.NewHarness(t)
+	for _, env := range h.Env() {
+		key, value, _ := strings.Cut(env, "=")
+		t.Setenv(key, value)
+	}
+	t.Setenv("WSFOLD_PROJECTS_DIR", ".")
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "symlink")
+
+	app := wsfold.NewApp()
+	app.Runner = wsfold.Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Init(h.Workspace); err != nil {
+		t.Fatalf("Init returned error: %v", err)
+	}
+	for _, name := range []string{"service", "worker"} {
+		repoPath := filepath.Join(h.TrustedRoot, name)
+		h.InitRepo(repoPath)
+		h.RunGit(repoPath, "remote", "add", "origin", "https://github.com/acme/"+name+".git")
+		if err := app.Summon(h.Workspace, name); err != nil {
+			t.Fatalf("Summon %s returned error: %v", name, err)
+		}
+	}
+	if err := os.Remove(filepath.Join(h.Workspace, "worker")); err != nil {
+		t.Fatalf("remove worker symlink: %v", err)
+	}
+	subdir := filepath.Join(h.Workspace, "service", "nested")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatalf("mkdir subdir: %v", err)
+	}
+	t.Chdir(subdir)
+
+	var stdout bytes.Buffer
+	if err := Run([]string{"status"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run status returned error: %v", err)
+	}
+	output := stdout.String()
+	for _, snippet := range []string{
+		"FOLDER",
+		"TYPE",
+		"REF",
+		"STATE",
+		"BRANCH",
+		"service",
+		"acme/service",
+		"trusted",
+		"attached",
+		"worker",
+		"acme/worker",
+		"unmounted",
+		"Actions:",
+		"managed symlink is missing",
+		"wsfold summon acme/worker",
+		"Summary: 1 attached, 1 unmounted, 0 invalid",
+	} {
+		if !strings.Contains(output, snippet) {
+			t.Fatalf("status output missing %q:\n%s", snippet, output)
+		}
+	}
+}
+
 func TestRunCompletionZsh(t *testing.T) {
 	t.Parallel()
 
@@ -246,6 +342,9 @@ func TestRunCompletionZsh(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "worktree:create a workspace-local managed Git worktree") {
 		t.Fatalf("completion output did not contain worktree description: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "status:inspect declared workspace health without changing files") {
+		t.Fatalf("completion output did not contain status description: %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "remove-worktrees:remove clean external Git worktrees for trusted repositories") {
 		t.Fatalf("completion output did not contain remove-worktrees description: %q", stdout.String())
