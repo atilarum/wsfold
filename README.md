@@ -113,6 +113,9 @@ wsfold worktree org_name/service-name release/2026-q1
 # Create a workspace-local managed worktree on a new branch.
 wsfold worktree --create-branch org_name/service-name agent/refactor
 
+# Remove old clean external Git worktrees known to trusted primary checkouts.
+wsfold remove-worktrees
+
 # Dismiss a repository interactively.
 wsfold dismiss
 
@@ -145,6 +148,9 @@ Commands:
 - `wsfold worktree [repo-ref] [branch]`
   Create a WSFold-managed Git worktree directly under the active workspace. The command first ensures the trusted primary repository is summoned into the workspace, then runs Git worktree creation from that workspace-visible primary attachment. With no positional arguments, the command runs in fully interactive mode: it opens a single-select source picker first and then a single-select branch picker. If `repo-ref` is provided but `branch` is omitted, the command skips the source picker and opens the branch picker for that repository. The branch picker lets you search existing branches or type a new branch name. Use `--create-branch` in non-interactive mode to force creation of a new branch. Default folder names use `<primary-folder>-<branch-slug>`, and `--name` overrides only the workspace-local folder name.
 
+- `wsfold remove-worktrees`
+  Inspect linked Git worktrees known to trusted primary checkouts and remove only selected clean branch-backed external worktrees after confirmation. The picker hides primary checkout rows, because they are source repositories rather than removable worktrees. The command uses Git's worktree removal lifecycle, so removing a worktree directory preserves the branch and commits. It also supports explicit cleanup of selected stale worktree metadata when Git reports a missing prunable row. Dirty worktrees, detached worktrees, locked worktrees, current-workspace managed worktrees, legacy rows, ambiguous rows, and unmanaged worktrees inside the active workspace are protected or disabled. Use `wsfold dismiss` for current-workspace managed worktrees. See [docs/remove-worktrees.md](docs/remove-worktrees.md).
+
 - `wsfold reindex`
   Refresh the trusted GitHub remote cache. By default, the cache is refreshed in the background when `wsfold summon` opens and has a 24-hour lifetime. Use `reindex` to refresh it earlier.
 
@@ -157,7 +163,7 @@ Commands:
 
 The interactive picker and `wsfold status` use three recovery states for declared entries. `attached` means the entry is healthy. `unmounted` means manifest intent exists and WSFold can restore the runtime realization by repeating `summon` for one item or `summon-all` for all recoverable items. `invalid` means the current filesystem or Git shape is ambiguous or unsafe for automatic repair. Examples of invalid state include a missing source checkout, unmanaged files at the target path, a missing external root, or broken worktree control metadata that WSFold cannot prove safe to repair.
 
-`wsfold worktree` is intentionally workspace-local. The created worktree depends on the primary repository attachment that is visible in the active workspace because its Git control path is tied to that primary checkout. If the worktree picker shows an existing managed worktree as `unmounted`, selecting it repairs that worktree instead of creating a nested worktree. External worktree inventory, adoption, and cleanup are outside this command's scope.
+`wsfold worktree` is intentionally workspace-local. The created worktree depends on the primary repository attachment that is visible in the active workspace because its Git control path is tied to that primary checkout. If the worktree picker shows an existing managed worktree as `unmounted`, selecting it repairs that worktree instead of creating a nested worktree. External worktree inventory, adoption, and cleanup are outside this command's scope; use `wsfold remove-worktrees` for old external Git worktrees that are outside the current workspace lifecycle.
 
 ## Status Diagnostics
 

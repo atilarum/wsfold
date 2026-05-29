@@ -520,6 +520,8 @@ func pickerTitle(command string) string {
 		return "Choose a trusted repository to create a worktree from"
 	case "worktree-branch":
 		return "Choose or type a branch for the new worktree"
+	case "remove-worktrees":
+		return "Choose external worktrees or stale metadata to remove"
 	default:
 		return "Select repository"
 	}
@@ -566,7 +568,7 @@ func visibleRange(cursor int, total int, maxItems int) (int, int) {
 }
 
 func selectionMarkerColor(command string) lipgloss.TerminalColor {
-	if command == "dismiss" {
+	if command == "dismiss" || command == "remove-worktrees" {
 		return lipgloss.Color("196")
 	}
 	return lipgloss.Color("42")
@@ -591,6 +593,14 @@ func pickerSearchText(candidate wsfold.CompletionCandidate, command string) stri
 	}
 	if branch := strings.TrimSpace(pickerBranchText(candidate, command)); branch != "" {
 		parts = append(parts, branch)
+	}
+	if command == "remove-worktrees" {
+		if path := strings.TrimSpace(candidate.Description); path != "" {
+			parts = append(parts, path)
+		}
+		if reason := strings.TrimSpace(candidate.Branch); reason != "" {
+			parts = append(parts, reason)
+		}
 	}
 	if status := strings.TrimSpace(string(candidate.Realization)); status != "" {
 		parts = append(parts, status)
@@ -641,6 +651,10 @@ func renderPickerRow(
 	descStyle lipgloss.Style,
 	active bool,
 ) string {
+	if command == "remove-worktrees" {
+		return renderRemoveWorktreePickerRow(candidate, selectMarker, widths, descStyle, active)
+	}
+
 	name := lipgloss.NewStyle().Width(widths.name).Render(truncateText(pickerPrimaryText(candidate), widths.name))
 	row := fmt.Sprintf("%s %s", selectMarker, name)
 
@@ -674,6 +688,19 @@ func renderPickerRow(
 	return row
 }
 
+func renderRemoveWorktreePickerRow(candidate wsfold.CompletionCandidate, selectMarker string, widths pickerWidths, _ lipgloss.Style, active bool) string {
+	repo := truncateText(pickerPrimaryText(candidate), widths.name)
+	statusText := pickerSourceLabel(candidate, "remove-worktrees")
+	status := lipgloss.NewStyle().Width(widths.source).Render(statusText)
+	status = renderRemoveWorktreeStatus(status, string(candidate.Source), active)
+	return formatRemoveWorktreeColumns(selectMarker, repo, status, candidate.Description, widths)
+}
+
+func formatRemoveWorktreeColumns(marker string, repo string, status string, path string, widths pickerWidths) string {
+	repoCell := lipgloss.NewStyle().Width(widths.name).Render(repo)
+	return fmt.Sprintf("%s  %s    %s    %s", marker, repoCell, status, path)
+}
+
 func pickerColumnWidths(items []pickerItem, command string) pickerWidths {
 	widths := pickerWidths{}
 	for _, item := range items {
@@ -688,12 +715,18 @@ func pickerColumnWidths(items []pickerItem, command string) pickerWidths {
 	if widths.source == 0 {
 		widths.source = len("remote")
 	}
+	if command == "remove-worktrees" {
+		widths.source = max(widths.source, len("ambiguous"))
+	}
 	return widths
 }
 
 func pickerDetailText(candidate wsfold.CompletionCandidate, command string) string {
 	if command == "worktree-branch" {
 		return candidate.Description
+	}
+	if command == "remove-worktrees" {
+		return candidate.Slug
 	}
 	if candidate.Slug != "" {
 		return candidate.Slug
@@ -709,7 +742,7 @@ func pickerKindText(candidate wsfold.CompletionCandidate) string {
 }
 
 func pickerBranchText(candidate wsfold.CompletionCandidate, command string) string {
-	if command == "worktree-branch" {
+	if command == "worktree-branch" || command == "remove-worktrees" {
 		return ""
 	}
 	branch := strings.TrimSpace(candidate.Branch)
@@ -747,6 +780,9 @@ func pickerSourceLabel(candidate wsfold.CompletionCandidate, command string) str
 		}
 		return "free"
 	}
+	if command == "remove-worktrees" {
+		return string(candidate.Source)
+	}
 	if candidate.Attached && command == "summon" {
 		if candidate.Realization == wsfold.RealizationUnmounted || candidate.Realization == wsfold.RealizationInvalid {
 			return string(candidate.Realization)
@@ -780,6 +816,9 @@ func renderSourceMarkerText(candidate wsfold.CompletionCandidate, command string
 		}
 		return localStyle.Render(text)
 	}
+	if command == "remove-worktrees" {
+		return renderRemoveWorktreeStatus(text, string(candidate.Source), false)
+	}
 	if candidate.Attached && (command == "summon" || command == "summon-external") {
 		if candidate.Realization == wsfold.RealizationUnmounted {
 			return localStyle.Render(text)
@@ -808,6 +847,24 @@ func renderSourceMarkerText(candidate wsfold.CompletionCandidate, command string
 		return localStyle.Render(text)
 	case wsfold.CompletionSourceRemote:
 		return remoteStyle.Render(text)
+	default:
+		return text
+	}
+}
+
+func renderRemoveWorktreeStatus(text string, status string, active bool) string {
+	if active {
+		return text
+	}
+	switch status {
+	case "clean", "missing":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Render(text)
+	case "attached":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render(text)
+	case "dirty", "locked", "detached", "ambiguous", "blocked":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(text)
+	case "legacy":
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render(text)
 	default:
 		return text
 	}
