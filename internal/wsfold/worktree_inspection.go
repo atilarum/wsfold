@@ -58,9 +58,7 @@ func InspectManagedWorktree(manifest Manifest, entry ManagedWorktreeEntry, runne
 
 	if _, err := os.Stat(entry.WorkspacePath); err != nil {
 		if os.IsNotExist(err) {
-			result.State = ManagedWorktreeMissing
-			result.Reason = "managed worktree directory is missing"
-			return result
+			return inspectMissingManagedWorktree(result, entry, primary, runner)
 		}
 		result.State = ManagedWorktreeInvalidControlPath
 		result.Reason = fmt.Sprintf("stat managed worktree: %v", err)
@@ -98,6 +96,37 @@ func InspectManagedWorktree(manifest Manifest, entry ManagedWorktreeEntry, runne
 	}
 
 	result.State = ManagedWorktreeHealthy
+	return result
+}
+
+func inspectMissingManagedWorktree(result ManagedWorktreeInspection, entry ManagedWorktreeEntry, primary Entry, runner Runner) ManagedWorktreeInspection {
+	worktreePaths, err := listWorktreeBranchPaths(runner, primary.MountPath)
+	if err != nil {
+		result.State = ManagedWorktreeInvalidControlPath
+		result.Reason = fmt.Sprintf("managed worktree directory is missing and primary worktrees could not be inspected: %v", err)
+		return result
+	}
+
+	actualPath := strings.TrimSpace(worktreePaths[entry.Branch])
+	if actualPath != "" && filepath.Clean(actualPath) != filepath.Clean(entry.WorkspacePath) {
+		dirty, err := worktreeHasChanges(runner, actualPath)
+		if err != nil {
+			result.State = ManagedWorktreeDirtyBlocked
+			result.Reason = fmt.Sprintf("managed worktree directory is missing at %s, but branch %s is still checked out at %s and its status could not be inspected: %v", entry.WorkspacePath, entry.Branch, actualPath, err)
+			return result
+		}
+		if dirty {
+			result.State = ManagedWorktreeDirtyBlocked
+			result.Reason = fmt.Sprintf("managed worktree directory is missing at %s, but branch %s is still checked out at %s with staged, unstaged, or untracked changes", entry.WorkspacePath, entry.Branch, actualPath)
+			return result
+		}
+		result.State = ManagedWorktreeInvalidControlPath
+		result.Reason = fmt.Sprintf("managed worktree directory is missing at %s, but branch %s is still checked out at %s", entry.WorkspacePath, entry.Branch, actualPath)
+		return result
+	}
+
+	result.State = ManagedWorktreeMissing
+	result.Reason = "managed worktree directory is missing"
 	return result
 }
 

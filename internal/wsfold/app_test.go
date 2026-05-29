@@ -816,6 +816,54 @@ func TestDismissManagedWorktreeRefusesDirtyBranchlessAndUnavailablePrimary(t *te
 	}
 }
 
+func TestDismissManagedWorktreeRefusesStaleManifestPathWhenBranchStillCheckedOut(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	base := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(base)
+	h.RunGit(base, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.RunGit(base, "branch", "feature/worktree")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Worktree(h.Workspace, "service", "feature/worktree", WorktreeOptions{}); err != nil {
+		t.Fatalf("Worktree returned error: %v", err)
+	}
+	worktreePath := filepath.Join(h.Workspace, "service-feature-worktree")
+	if err := os.WriteFile(filepath.Join(worktreePath, "dirty.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatalf("write dirty file: %v", err)
+	}
+
+	manifest, err := loadManifest(h.Workspace)
+	if err != nil {
+		t.Fatalf("loadManifest returned error: %v", err)
+	}
+	if len(manifest.ManagedWorktrees) != 1 {
+		t.Fatalf("expected one managed worktree, got %#v", manifest.ManagedWorktrees)
+	}
+	manifest.ManagedWorktrees[0].WorkspacePath = filepath.Join(h.Workspace, "service-feature-worktree-stale")
+	if err := saveManifest(h.Workspace, manifest); err != nil {
+		t.Fatalf("saveManifest returned error: %v", err)
+	}
+
+	err = app.Dismiss(h.Workspace, "acme/service/feature/worktree")
+	if err == nil || !strings.Contains(err.Error(), "branch feature/worktree is still checked out") || !strings.Contains(err.Error(), "changes") {
+		t.Fatalf("expected stale path dirty worktree refusal, got %v", err)
+	}
+	if _, statErr := os.Stat(worktreePath); statErr != nil {
+		t.Fatalf("blocked managed worktree should remain, got %v", statErr)
+	}
+	manifest, err = loadManifest(h.Workspace)
+	if err != nil {
+		t.Fatalf("loadManifest returned error: %v", err)
+	}
+	if len(manifest.ManagedWorktrees) != 1 {
+		t.Fatalf("blocked managed worktree manifest entry should remain, got %#v", manifest.ManagedWorktrees)
+	}
+}
+
 func TestDismissBlocksPrimaryUntilManagedWorktreesAreHandled(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnv(t, h)

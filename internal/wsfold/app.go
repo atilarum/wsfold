@@ -477,6 +477,10 @@ func (a *App) dismissManagedWorktree(primaryRoot string, cfg Config, manifest Ma
 		return err
 	}
 
+	if inspection.State == ManagedWorktreeMissing {
+		_, _ = fmt.Fprintln(a.Stdout, formatManagedWorktreeRecordDismissSuccess(entry))
+		return nil
+	}
 	_, _ = fmt.Fprintln(a.Stdout, formatManagedWorktreeDismissSuccess(entry))
 	return nil
 }
@@ -588,6 +592,12 @@ func formatManagedWorktreeDismissSuccess(entry ManagedWorktreeEntry) string {
 	icon := ansiRedBold + "-" + ansiReset
 	repoRef := ansiCyanBold + entry.RepoRef + ansiReset
 	return fmt.Sprintf("%s Managed worktree removed: %s", icon, repoRef)
+}
+
+func formatManagedWorktreeRecordDismissSuccess(entry ManagedWorktreeEntry) string {
+	icon := ansiRedBold + "-" + ansiReset
+	repoRef := ansiCyanBold + entry.RepoRef + ansiReset
+	return fmt.Sprintf("%s Managed worktree record removed: %s", icon, repoRef)
 }
 
 func removeTrustedSymlink(linkPath string) error {
