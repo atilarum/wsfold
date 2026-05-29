@@ -1,6 +1,7 @@
 package wsfold
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,10 +72,10 @@ func TestStatusProjectionReportsTrustedAndExternalRowsReadOnly(t *testing.T) {
 		t.Fatalf("unexpected summary: %#v", report.Summary)
 	}
 
-	if got := mustReadFile(t, manifestPath(h.Workspace)); got != manifestBefore {
+	if got := mustReadFile(t, manifestPath(h.Workspace)); !bytes.Equal(got, manifestBefore) {
 		t.Fatal("Status should not rewrite manifest bytes")
 	}
-	if got := mustReadFile(t, workspacePath(h.Workspace)); got != workspaceBefore {
+	if got := mustReadFile(t, workspacePath(h.Workspace)); !bytes.Equal(got, workspaceBefore) {
 		t.Fatal("Status should not rewrite workspace bytes")
 	}
 	if _, err := os.Stat(filepath.Join(blockedPath, "user.txt")); err != nil {
@@ -236,13 +237,4 @@ func findStatusRow(t *testing.T, report StatusReport, ref string) StatusRow {
 	}
 	t.Fatalf("missing status row for %s in %#v", ref, report.Rows)
 	return StatusRow{}
-}
-
-func mustReadFile(t *testing.T, path string) string {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	return string(data)
 }
