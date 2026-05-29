@@ -354,7 +354,24 @@ func (a *App) ensurePrimaryAttachmentForWorktree(primaryRoot string, cfg Config,
 	}
 	if entry, ok := findPrimaryAttachmentForSource(manifest, source.Repo); ok {
 		if !isGitRepo(entry.MountPath) {
-			return Entry{}, Manifest{}, fmt.Errorf("primary repository %s is declared but unavailable at %s; summon or repair it before creating a worktree", entry.RepoRef, entry.MountPath)
+			status, err := a.reconcileTrustedEntry(primaryRoot, cfg, manifest, entry)
+			if err != nil {
+				return Entry{}, Manifest{}, err
+			}
+			if status == RealizationInvalid {
+				return Entry{}, Manifest{}, fmt.Errorf("primary repository %s is invalid and cannot be recovered automatically", entry.RepoRef)
+			}
+			manifest, err = loadManifest(primaryRoot)
+			if err != nil {
+				return Entry{}, Manifest{}, err
+			}
+			entry, ok = findPrimaryAttachmentForSource(manifest, source.Repo)
+			if !ok {
+				return Entry{}, Manifest{}, fmt.Errorf("primary repository %s was not available after recovery", source.DisplayRef())
+			}
+			if !isGitRepo(entry.MountPath) {
+				return Entry{}, Manifest{}, fmt.Errorf("primary repository %s is still unavailable at %s after recovery", entry.RepoRef, entry.MountPath)
+			}
 		}
 		return entry, manifest, nil
 	}

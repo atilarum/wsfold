@@ -701,6 +701,37 @@ func TestWorktreeCreatesAndAttachesExistingLocalBranch(t *testing.T) {
 	}
 }
 
+func TestWorktreeRecoversUnavailablePrimaryBeforeCreatingWorktree(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	base := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(base)
+	h.RunGit(base, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.RunGit(base, "branch", "feature/worktree")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("Summon primary returned error: %v", err)
+	}
+	if err := os.Remove(filepath.Join(h.Workspace, "service")); err != nil {
+		t.Fatalf("remove primary symlink: %v", err)
+	}
+
+	if err := app.Worktree(h.Workspace, "service", "feature/worktree", WorktreeOptions{}); err != nil {
+		t.Fatalf("Worktree should recover primary before creating worktree, got error: %v", err)
+	}
+	if target, err := os.Readlink(filepath.Join(h.Workspace, "service")); err != nil || target != base {
+		t.Fatalf("expected primary symlink recovered to %s, got %q err=%v", base, target, err)
+	}
+	worktreePath := filepath.Join(h.Workspace, "service-feature-worktree")
+	if _, err := os.Stat(filepath.Join(worktreePath, ".git")); err != nil {
+		t.Fatalf("expected worktree created after primary recovery: %v", err)
+	}
+}
+
 func TestSummonRecoversManagedWorktreePrimaryAttachment(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnv(t, h)
