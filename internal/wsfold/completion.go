@@ -39,6 +39,8 @@ func (a *App) Complete(cwd string, command string, prefix string) ([]CompletionC
 		return a.completeWorktreeSources(cwd, prefix)
 	case "dismiss":
 		return a.completeManifest(cwd, prefix)
+	case "remove-worktrees":
+		return a.ExternalWorktreeRemovalCandidates(cwd)
 	default:
 		return nil, nil
 	}

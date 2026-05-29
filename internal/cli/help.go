@@ -46,6 +46,11 @@ var commandHelpEntries = []commandHelpEntry{
 		Description: "create a workspace-local managed Git worktree",
 	},
 	{
+		Name:        "remove-worktrees",
+		Usage:       "wsfold remove-worktrees",
+		Description: "remove clean external Git worktrees for trusted repositories",
+	},
+	{
 		Name:        "init",
 		Usage:       "wsfold init",
 		Description: "initialize the current directory as a wsfold workspace",
@@ -120,6 +125,7 @@ func helpText() string {
 	b.WriteString("`wsfold summon` is idempotent: for declared trusted entries it checks the manifest first and recovers unmounted runtime state before falling back to new local or remote attachment. Use `wsfold summon-all` after a restart or container reset to reconcile every declared trusted attachment and managed worktree.\n\n")
 	b.WriteString("Picker states are `attached` for healthy entries, `unmounted` for recoverable declared entries, and `invalid` when WSFold cannot prove automatic recovery is safe.\n\n")
 	b.WriteString("`wsfold worktree` is trusted-only. It summons the primary repository first, then creates a managed worktree in the active workspace. If a current-workspace managed worktree is shown as unmounted, selecting it repairs that managed worktree. Use --name to override the folder name and --create-branch to create a new branch.\n\n")
+	b.WriteString("`wsfold remove-worktrees` is for external Git worktree cleanup. It shows linked worktree rows known to trusted primary checkouts, hides the primary checkout rows themselves, removes only selected clean branch-backed external worktrees after confirmation, preserves branches and commits, and protects current workspace managed worktrees; use `wsfold dismiss` for those.\n\n")
 	b.WriteString("Trusted attachments use the symlink backend by default. On Linux hosts with FUSE3, bindfs,\n")
 	b.WriteString("fusermount3, and a usable /dev/fuse, set WSFOLD_MOUNT_BACKEND=linux-fuse-bind to run\n")
 	b.WriteString("bindfs --no-allow-other and detach with fusermount3 -u. Linux devcontainers may instead use\n")
@@ -160,6 +166,7 @@ func helpText() string {
 	b.WriteString("  wsfold worktree\n")
 	b.WriteString("  wsfold worktree org_name/billing-service release/2026-q1\n")
 	b.WriteString("  wsfold worktree --create-branch org_name/billing-service agent/refactor\n")
+	b.WriteString("  wsfold remove-worktrees\n")
 	b.WriteString("  wsfold dismiss\n")
 	b.WriteString("  wsfold init\n")
 	b.WriteString("  wsfold reindex\n")

@@ -98,6 +98,11 @@ func Run(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		return runWorktreeCommand(app, cwd, repoRef, branch, opts, stdout, stderr)
+	case "remove-worktrees":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: wsfold remove-worktrees")
+		}
+		return runRemoveWorktreesCommand(app, cwd, stdout, stderr)
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
@@ -219,4 +224,81 @@ func runWorktreeCommand(app *wsfold.App, cwd string, repoRef string, branch stri
 		Name:         opts.Name,
 		CreateBranch: opts.CreateBranch,
 	})
+}
+
+type removeWorktreesConfirmFunc func(stdout io.Writer, rows []wsfold.ExternalWorktreeRow) (bool, error)
+
+var confirmRemoveWorktrees removeWorktreesConfirmFunc = promptRemoveWorktreesConfirmation
+
+func runRemoveWorktreesCommand(app *wsfold.App, cwd string, stdout io.Writer, stderr io.Writer) error {
+	inventory, err := app.ExternalWorktreeRemovalInventory(cwd)
+	if err != nil {
+		return err
+	}
+	selectable := 0
+	for _, row := range inventory.Rows {
+		if row.Selectable {
+			selectable++
+		}
+	}
+	if selectable == 0 {
+		_, _ = fmt.Fprintf(stdout, "%s·%s No clean external worktrees or stale metadata rows are available to remove\n", ansiYellow+ansiBold, ansiReset)
+		return nil
+	}
+
+	ids, err := runPicker(app, cwd, "remove-worktrees", stdout, stderr)
+	if err == errPickerCancelled {
+		_, _ = fmt.Fprintf(stdout, "%s·%s Selection cancelled\n", ansiYellow+ansiBold, ansiReset)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	selectedRows := selectedExternalWorktreeRows(inventory.Rows, ids)
+	confirmed, err := confirmRemoveWorktrees(stdout, selectedRows)
+	if err != nil {
+		return err
+	}
+	if !confirmed {
+		_, _ = fmt.Fprintf(stdout, "%s·%s Removal cancelled\n", ansiYellow+ansiBold, ansiReset)
+		return nil
+	}
+	_, err = app.RemoveExternalWorktrees(cwd, ids)
+	return err
+}
+
+func selectedExternalWorktreeRows(rows []wsfold.ExternalWorktreeRow, ids []string) []wsfold.ExternalWorktreeRow {
+	byID := map[string]wsfold.ExternalWorktreeRow{}
+	for _, row := range rows {
+		byID[row.ID] = row
+	}
+	selected := make([]wsfold.ExternalWorktreeRow, 0, len(ids))
+	for _, id := range ids {
+		if row, ok := byID[id]; ok {
+			selected = append(selected, row)
+		}
+	}
+	return selected
+}
+
+func promptRemoveWorktreesConfirmation(stdout io.Writer, rows []wsfold.ExternalWorktreeRow) (bool, error) {
+	_, _ = fmt.Fprintln(stdout, "The selected external worktree paths will be removed if they are still safe.")
+	_, _ = fmt.Fprintln(stdout, "Open shells, editors, or workspaces may still reference those paths.")
+	for _, row := range rows {
+		action := "remove"
+		if row.Action == wsfold.ExternalWorktreeActionCleanStale {
+			action = "clean metadata"
+		}
+		_, _ = fmt.Fprintf(stdout, "  %s: %s\n", action, row.WorktreePath)
+	}
+	_, _ = fmt.Fprint(stdout, "Type yes to continue: ")
+	var answer string
+	if _, err := fmt.Fscan(os.Stdin, &answer); err != nil {
+		return false, nil
+	}
+	return strings.EqualFold(strings.TrimSpace(answer), "yes"), nil
 }

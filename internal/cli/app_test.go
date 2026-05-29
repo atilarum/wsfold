@@ -94,6 +94,7 @@ func TestRunHelp(t *testing.T) {
 		"wsfold summon-external [repo-ref]",
 		"wsfold dismiss [repo-ref]",
 		"wsfold worktree [repo-ref] [branch]",
+		"wsfold remove-worktrees",
 		"wsfold init",
 		"wsfold reindex",
 		"wsfold completion zsh",
@@ -117,6 +118,7 @@ func TestRunHelp(t *testing.T) {
 		"summon-external   add an external repository as a workspace root",
 		"dismiss           remove a repository or clean managed worktree from the composition",
 		"worktree          create a workspace-local managed Git worktree",
+		"remove-worktrees  remove clean external Git worktrees for trusted repositories",
 		"init              initialize the current directory as a wsfold workspace",
 		"reindex           refresh the trusted GitHub remote cache",
 		"completion        print shell autocompletion setup",
@@ -161,6 +163,15 @@ func TestRunUnknownCommand(t *testing.T) {
 
 	if !strings.Contains(err.Error(), `unknown command "nope"`) {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunRemoveWorktreesRejectsArguments(t *testing.T) {
+	t.Parallel()
+
+	err := Run([]string{"remove-worktrees", "extra"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "usage: wsfold remove-worktrees") {
+		t.Fatalf("unexpected remove-worktrees error: %v", err)
 	}
 }
 
@@ -236,12 +247,93 @@ func TestRunCompletionZsh(t *testing.T) {
 	if !strings.Contains(stdout.String(), "worktree:create a workspace-local managed Git worktree") {
 		t.Fatalf("completion output did not contain worktree description: %q", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "remove-worktrees:remove clean external Git worktrees for trusted repositories") {
+		t.Fatalf("completion output did not contain remove-worktrees description: %q", stdout.String())
+	}
 	if !strings.Contains(stdout.String(), "completion:print shell autocompletion setup") {
 		t.Fatalf("completion output did not contain aligned completion description: %q", stdout.String())
 	}
 
 	if stderr.Len() != 0 {
 		t.Fatalf("unexpected stderr output: %q", stderr.String())
+	}
+}
+
+func TestRunRemoveWorktreesCancelConfirmationDoesNotMutate(t *testing.T) {
+	originalPicker := runPicker
+	originalConfirm := confirmRemoveWorktrees
+	t.Cleanup(func() {
+		runPicker = originalPicker
+		confirmRemoveWorktrees = originalConfirm
+	})
+
+	h := testutil.NewHarness(t)
+	for _, env := range h.Env() {
+		key, value, _ := strings.Cut(env, "=")
+		t.Setenv(key, value)
+	}
+	t.Setenv("WSFOLD_PROJECTS_DIR", ".")
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "symlink")
+
+	primary := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(primary)
+	worktreePath := filepath.Join(h.Root, "clean-external")
+	h.RunGit(primary, "worktree", "add", "-b", "clean-branch", worktreePath, "HEAD")
+
+	app := wsfold.NewApp()
+	if err := app.Init(h.Workspace); err != nil {
+		t.Fatalf("Init returned error: %v", err)
+	}
+	inventory, err := app.ExternalWorktreeRemovalInventory(h.Workspace)
+	if err != nil {
+		t.Fatalf("inventory returned error: %v", err)
+	}
+	var selectedID string
+	for _, row := range inventory.Rows {
+		if row.WorktreePath == worktreePath {
+			selectedID = row.ID
+			break
+		}
+	}
+	if selectedID == "" {
+		t.Fatalf("did not find clean external worktree in inventory: %#v", inventory.Rows)
+	}
+
+	runPicker = func(app *wsfold.App, cwd string, command string, stdout io.Writer, stderr io.Writer) ([]string, error) {
+		if command != "remove-worktrees" {
+			t.Fatalf("unexpected picker command: %s", command)
+		}
+		return []string{selectedID}, nil
+	}
+	confirmRemoveWorktrees = func(stdout io.Writer, rows []wsfold.ExternalWorktreeRow) (bool, error) {
+		if len(rows) != 1 || rows[0].ID != selectedID {
+			t.Fatalf("unexpected confirmation rows: %#v", rows)
+		}
+		return false, nil
+	}
+
+	previousCWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	if err := os.Chdir(h.Workspace); err != nil {
+		t.Fatalf("chdir workspace: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(previousCWD); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	})
+
+	var stdout bytes.Buffer
+	if err := Run([]string{"remove-worktrees"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Removal cancelled") {
+		t.Fatalf("expected cancellation output, got %q", stdout.String())
+	}
+	if _, err := os.Stat(worktreePath); err != nil {
+		t.Fatalf("worktree should remain after cancelled confirmation: %v", err)
 	}
 }
 

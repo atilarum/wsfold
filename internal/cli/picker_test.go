@@ -149,6 +149,38 @@ func TestPickerModelRendersBranchAndWorktreeBadge(t *testing.T) {
 	}
 }
 
+func TestPickerModelRendersRemoveWorktreesWithReadableStatusAndFullPath(t *testing.T) {
+	fullPath := "/tmp/wsfold test/observability/feature-worktree-with-a-long-name"
+	model := newPickerModel("remove-worktrees", []wsfold.CompletionCandidate{
+		{
+			Key:         "row-1",
+			Value:       "row-1",
+			Name:        "atilarum/observability",
+			Description: fullPath,
+			Branch:      "remove worktree",
+			Source:      wsfold.CompletionSource("clean"),
+		},
+	})
+
+	view := stripANSI(model.View())
+	for _, expected := range []string{"atilarum/observability", "clean", fullPath} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("expected remove-worktrees row to render %q, got:\n%s", expected, view)
+		}
+	}
+	for _, unexpected := range []string{"repo", "status", "comment", "remove worktree"} {
+		if strings.Contains(view, unexpected) {
+			t.Fatalf("remove-worktrees rows should not render %q, got:\n%s", unexpected, view)
+		}
+	}
+	if strings.Contains(view, "folder") {
+		t.Fatalf("remove-worktrees rows should not render a folder column, got:\n%s", view)
+	}
+	if strings.Contains(view, "worktree:") {
+		t.Fatalf("remove-worktrees rows should not render branch badges, got:\n%s", view)
+	}
+}
+
 func TestPickerModelTruncatesVeryLongSlugColumn(t *testing.T) {
 	model := newPickerModel("summon", []wsfold.CompletionCandidate{
 		{

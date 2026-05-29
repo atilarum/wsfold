@@ -125,6 +125,9 @@ func writeDynamicCompletions(cwd string, args []string, stdout io.Writer) error 
 
 	app := wsfold.NewApp()
 	command := args[1]
+	if command == "remove-worktrees" {
+		return nil
+	}
 	candidates, err := app.Complete(cwd, command, args[2])
 	if err != nil {
 		return err
