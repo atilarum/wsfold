@@ -306,6 +306,28 @@ func TestWorktreeBranchPickerUsesNavigatedExistingBranch(t *testing.T) {
 	}
 }
 
+func TestWorktreeBranchPickerDoesNotSelectDisabledExistingWorktreeBranch(t *testing.T) {
+	model := newPickerModel("worktree-branch", []wsfold.CompletionCandidate{
+		{Value: "dg", Name: "dg", Branch: "dg", Disabled: true, Description: "service-dg"},
+		{Value: "main", Name: "main"},
+	})
+
+	for _, r := range "dg" {
+		updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		model = updated.(pickerModel)
+	}
+
+	if selected := model.selectedValues(); len(selected) != 0 {
+		t.Fatalf("expected disabled branch not to be selected, got %#v", selected)
+	}
+	if status := pickerSourceLabel(model.filtered[model.cursor].candidate, "worktree-branch"); status != "used" {
+		t.Fatalf("expected used status, got %q", status)
+	}
+	if folder := pickerDetailText(model.filtered[model.cursor].candidate, "worktree-branch"); folder != "service-dg" {
+		t.Fatalf("expected worktree folder detail, got %q", folder)
+	}
+}
+
 func TestPickerModelSpaceDoesNothingForAttachedSummonRowInMultiMode(t *testing.T) {
 	model := newPickerModel("summon", []wsfold.CompletionCandidate{
 		{Value: "alpha", Name: "alpha", Attached: true},

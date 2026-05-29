@@ -163,6 +163,12 @@ func (a *App) Worktree(cwd string, ref string, branch string, opts WorktreeOptio
 	}
 	previous := cloneManifest(manifest)
 
+	if worktreeBranches, err := listWorktreeBranchPaths(a.Runner, primaryEntry.MountPath); err != nil {
+		return err
+	} else if worktreePath := strings.TrimSpace(worktreeBranches[branch]); worktreePath != "" {
+		return fmt.Errorf("branch %q is already checked out by worktree at %s", branch, worktreePath)
+	}
+
 	targetPath, err := chooseManagedWorktreePath(primaryRoot, primaryEntry.MountPath, branch, opts.Name, manifest)
 	if err != nil {
 		return err

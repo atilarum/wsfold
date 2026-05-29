@@ -442,6 +442,9 @@ func (m pickerModel) selectedValues() []string {
 			if custom := strings.TrimSpace(m.input.Value()); custom != "" {
 				for _, item := range m.items {
 					if strings.EqualFold(strings.TrimSpace(item.candidate.Value), custom) {
+						if !m.isSelectable(item.candidate) {
+							return nil
+						}
 						return []string{item.candidate.Value}
 					}
 				}
@@ -580,13 +583,13 @@ func pickerSearchText(candidate wsfold.CompletionCandidate, command string) stri
 		parts = append(parts, source)
 	}
 
-	if slug := pickerSlugText(candidate); strings.TrimSpace(slug) != "" && slug != parts[0] {
+	if slug := pickerDetailText(candidate, command); strings.TrimSpace(slug) != "" && slug != parts[0] {
 		parts = append(parts, slug)
 	}
-	if branch := strings.TrimSpace(candidate.Branch); branch != "" {
+	if branch := strings.TrimSpace(pickerBranchText(candidate, command)); branch != "" {
 		parts = append(parts, branch)
 	}
-	if candidate.IsWorktree {
+	if candidate.IsWorktree && command != "worktree-branch" {
 		parts = append(parts, "worktree")
 		if branch := strings.TrimSpace(candidate.Branch); branch != "" {
 			parts = append(parts, "worktree:"+branch)
@@ -637,11 +640,11 @@ func renderPickerRow(
 
 	if sourceText := pickerSourceLabel(candidate, command); sourceText != "" {
 		sourceText = lipgloss.NewStyle().Width(widths.source).Render(sourceText)
-		row = fmt.Sprintf("%s  %s", row, renderSourceMarkerText(candidate, command, sourceText, attachedStyle, localStyle, remoteStyle, trustedStyle, externalStyle))
+		row = fmt.Sprintf("%s  %s", row, renderSourceMarkerText(candidate, command, sourceText, attachedStyle, localStyle, remoteStyle, trustedStyle, externalStyle, worktreeStyle))
 	}
 
 	if widths.slug > 0 {
-		detail := truncateText(pickerSlugText(candidate), widths.slug)
+		detail := truncateText(pickerDetailText(candidate, command), widths.slug)
 		detail = lipgloss.NewStyle().Width(widths.slug).Render(detail)
 		if active {
 			row = fmt.Sprintf("%s  %s", row, detail)
@@ -653,7 +656,7 @@ func renderPickerRow(
 	}
 
 	if widths.branch > 0 {
-		branchText := pickerBranchText(candidate)
+		branchText := pickerBranchText(candidate, command)
 		branch := lipgloss.NewStyle().Width(widths.branch).Render(truncateText(branchText, widths.branch))
 		if active {
 			row = fmt.Sprintf("%s  %s", row, branch)
@@ -670,8 +673,8 @@ func pickerColumnWidths(items []pickerItem, command string) pickerWidths {
 	for _, item := range items {
 		widths.name = max(widths.name, min(displayWidth(pickerPrimaryText(item.candidate)), 28))
 		widths.source = max(widths.source, displayWidth(pickerSourceLabel(item.candidate, command)))
-		widths.slug = max(widths.slug, min(displayWidth(pickerSlugText(item.candidate)), 36))
-		widths.branch = max(widths.branch, min(displayWidth(pickerBranchText(item.candidate)), 28))
+		widths.slug = max(widths.slug, min(displayWidth(pickerDetailText(item.candidate, command)), 36))
+		widths.branch = max(widths.branch, min(displayWidth(pickerBranchText(item.candidate, command)), 28))
 	}
 	if widths.name == 0 {
 		widths.name = 1
@@ -682,7 +685,10 @@ func pickerColumnWidths(items []pickerItem, command string) pickerWidths {
 	return widths
 }
 
-func pickerSlugText(candidate wsfold.CompletionCandidate) string {
+func pickerDetailText(candidate wsfold.CompletionCandidate, command string) string {
+	if command == "worktree-branch" {
+		return candidate.Description
+	}
 	if candidate.Slug != "" {
 		return candidate.Slug
 	}
@@ -696,7 +702,10 @@ func pickerKindText(candidate wsfold.CompletionCandidate) string {
 	return ""
 }
 
-func pickerBranchText(candidate wsfold.CompletionCandidate) string {
+func pickerBranchText(candidate wsfold.CompletionCandidate, command string) string {
+	if command == "worktree-branch" {
+		return ""
+	}
 	branch := strings.TrimSpace(candidate.Branch)
 	if candidate.IsWorktree {
 		if branch == "" {
@@ -723,6 +732,15 @@ func renderBranchText(candidate wsfold.CompletionCandidate, text string, worktre
 }
 
 func pickerSourceLabel(candidate wsfold.CompletionCandidate, command string) string {
+	if command == "worktree-branch" {
+		if candidate.Attached {
+			return "attached"
+		}
+		if candidate.Disabled {
+			return "used"
+		}
+		return "free"
+	}
 	if candidate.Attached && command == "summon" {
 		return "attached"
 	}
@@ -740,7 +758,16 @@ func pickerSourceLabel(candidate wsfold.CompletionCandidate, command string) str
 	return string(candidate.Source)
 }
 
-func renderSourceMarkerText(candidate wsfold.CompletionCandidate, command string, text string, attachedStyle lipgloss.Style, localStyle lipgloss.Style, remoteStyle lipgloss.Style, trustedStyle lipgloss.Style, externalStyle lipgloss.Style) string {
+func renderSourceMarkerText(candidate wsfold.CompletionCandidate, command string, text string, attachedStyle lipgloss.Style, localStyle lipgloss.Style, remoteStyle lipgloss.Style, trustedStyle lipgloss.Style, externalStyle lipgloss.Style, worktreeStyle lipgloss.Style) string {
+	if command == "worktree-branch" {
+		if candidate.Attached {
+			return attachedStyle.Render(text)
+		}
+		if candidate.Disabled {
+			return worktreeStyle.Render(text)
+		}
+		return localStyle.Render(text)
+	}
 	if candidate.Attached && (command == "summon" || command == "summon-external") {
 		return attachedStyle.Render(text)
 	}

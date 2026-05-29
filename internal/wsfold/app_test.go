@@ -567,6 +567,105 @@ func TestWorktreeCreatesNewBranchWithExplicitName(t *testing.T) {
 	assertManagedWorktreeControlPath(t, filepath.Join(h.Workspace, "service"), worktreePath)
 }
 
+func TestWorktreeBranchCandidatesDisableBranchesAlreadyCheckedOutByWorktrees(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	base := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(base)
+	h.RunGit(base, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.RunGit(base, "branch", "dg")
+	existingWorktree := filepath.Join(h.TrustedRoot, "service-dg")
+	h.RunGit(base, "worktree", "add", existingWorktree, "dg")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	candidates, err := app.WorktreeBranchCandidates(h.Workspace, "service")
+	if err != nil {
+		t.Fatalf("WorktreeBranchCandidates returned error: %v", err)
+	}
+
+	var dg CompletionCandidate
+	for _, candidate := range candidates {
+		if candidate.Value == "dg" {
+			dg = candidate
+			break
+		}
+	}
+	if dg.Value == "" {
+		t.Fatalf("expected dg branch candidate, got %#v", candidates)
+	}
+	if !dg.Disabled || dg.Attached || dg.Branch != "dg" {
+		t.Fatalf("expected dg branch to be disabled as a used worktree, got %#v", dg)
+	}
+	if dg.Description != filepath.Base(existingWorktree) {
+		t.Fatalf("expected existing worktree folder in description, got %#v", dg)
+	}
+}
+
+func TestWorktreeBranchCandidatesMarkManagedWorktreesAsAttached(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	base := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(base)
+	h.RunGit(base, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.RunGit(base, "branch", "feature/worktree")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Worktree(h.Workspace, "service", "feature/worktree", WorktreeOptions{}); err != nil {
+		t.Fatalf("Worktree returned error: %v", err)
+	}
+
+	candidates, err := app.WorktreeBranchCandidates(h.Workspace, "service")
+	if err != nil {
+		t.Fatalf("WorktreeBranchCandidates returned error: %v", err)
+	}
+	var worktree CompletionCandidate
+	for _, candidate := range candidates {
+		if candidate.Value == "feature/worktree" {
+			worktree = candidate
+			break
+		}
+	}
+	if worktree.Value == "" {
+		t.Fatalf("expected feature/worktree branch candidate, got %#v", candidates)
+	}
+	if !worktree.Attached || !worktree.Disabled {
+		t.Fatalf("expected managed worktree branch to be attached and disabled, got %#v", worktree)
+	}
+	if worktree.Description != "service-feature-worktree" {
+		t.Fatalf("expected managed worktree folder in description, got %#v", worktree)
+	}
+}
+
+func TestWorktreeRejectsBranchAlreadyCheckedOutByWorktreeBeforeGitAdd(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	base := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(base)
+	h.RunGit(base, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.RunGit(base, "branch", "dg")
+	existingWorktree := filepath.Join(h.TrustedRoot, "service-dg")
+	h.RunGit(base, "worktree", "add", existingWorktree, "dg")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+
+	err := app.Worktree(h.Workspace, "service", "dg", WorktreeOptions{})
+	if err == nil || !strings.Contains(err.Error(), `branch "dg" is already checked out by worktree at `+existingWorktree) {
+		t.Fatalf("expected existing worktree branch refusal, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(h.Workspace, "service-dg")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected no workspace-local worktree to be created, got %v", statErr)
+	}
+}
+
 func TestWorktreeClonesTrustedRemoteAndAttachesBranch(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnv(t, h)
