@@ -104,6 +104,9 @@ wsfold summon org_name/service-name
 # Restore every declared trusted attachment and managed worktree after a restart.
 wsfold summon-all
 
+# Inspect declared workspace health without changing files.
+wsfold status
+
 # Create a workspace-local managed worktree on an existing branch.
 wsfold worktree org_name/service-name release/2026-q1
 
@@ -130,6 +133,9 @@ Commands:
 - `wsfold summon-all`
   Reconcile the whole declared trusted workspace graph. This is the normal recovery command after a devcontainer restart, reboot, mount namespace reset, disappeared bind mount, or stopped FUSE daemon. Repository attachments are reconciled before dependent managed worktrees. WSFold keeps processing independent recoverable entries after an invalid entry, but exits non-zero if any entry remains invalid or failed.
 
+- `wsfold status`
+  Inspect the current workspace composition without changing files. Status reads the manifest and reports declared trusted attachments, external roots, and WSFold-managed worktrees as `attached`, `unmounted`, or `invalid`. It does not clone, mount, unmount, summon, dismiss, repair, rewrite the manifest, rewrite the `.code-workspace` file, delete paths, or alter Git metadata. Use it before recovery when a restart, devcontainer rebuild, disappeared mount, or suspicious workspace path makes the current state unclear.
+
 - `wsfold summon-external [repo-ref]`
   Add an external repository as a workspace root. Only works with repositories already present under `WSFOLD_EXTERNAL_DIR`. Without `repo-ref`, opens an interactive picker.
 
@@ -149,9 +155,25 @@ Commands:
 
 `owner/name` always refers to the primary checkout for that repository. New task worktrees are created with `wsfold worktree`, not by attaching arbitrary existing Git worktree directories with `wsfold summon`. `summon` offers trusted primary repositories and trusted remote repositories; unmanaged worktrees under `WSFOLD_TRUSTED_DIR` are not new attachment candidates. Attached repositories and managed worktrees appear in the generated `.code-workspace` file under their workspace folder names, so a primary checkout and one or more task worktrees can coexist in the same workspace.
 
-The interactive picker uses three recovery states for declared trusted entries. `attached` means the entry is healthy and not selectable for `summon`; `unmounted` means manifest intent exists and WSFold can restore the runtime realization by repeating `summon`; `invalid` means the current filesystem or Git shape is ambiguous or unsafe for automatic repair. Examples of invalid state include a missing source checkout, unmanaged files at the target path, or broken worktree control metadata that WSFold cannot prove safe to repair.
+The interactive picker and `wsfold status` use three recovery states for declared entries. `attached` means the entry is healthy. `unmounted` means manifest intent exists and WSFold can restore the runtime realization by repeating `summon` for one item or `summon-all` for all recoverable items. `invalid` means the current filesystem or Git shape is ambiguous or unsafe for automatic repair. Examples of invalid state include a missing source checkout, unmanaged files at the target path, a missing external root, or broken worktree control metadata that WSFold cannot prove safe to repair.
 
 `wsfold worktree` is intentionally workspace-local. The created worktree depends on the primary repository attachment that is visible in the active workspace because its Git control path is tied to that primary checkout. If the worktree picker shows an existing managed worktree as `unmounted`, selecting it repairs that worktree instead of creating a nested worktree. External worktree inventory, adoption, and cleanup are outside this command's scope.
+
+## Status Diagnostics
+
+Run `wsfold status` from the workspace root or any subdirectory when you want a read-only preflight view before choosing a recovery command. The output is a compact colorized table with the local folder, type, state, branch, and declared repository ref. Recovery actions and diagnostic details appear below the table only when a row is not healthy.
+
+- `attached`: no action is needed.
+- `unmounted`: run `wsfold summon <repo-ref>` for one row, or `wsfold summon-all` when several recoverable rows are unmounted.
+- `invalid`: inspect manually. WSFold avoids automatic cleanup here because deleting or overwriting the path could lose user data.
+
+Common diagnostics:
+
+- Missing symlink: status reports `unmounted`; run `wsfold summon <repo-ref>`.
+- Missing bind or FUSE mount: status reports `unmounted`; run `wsfold summon <repo-ref>` or `wsfold summon-all`.
+- Missing external root: status reports `invalid`; restore the external checkout path or update the composition with the correct external repository.
+- Unmounted managed worktree: status reports `unmounted`; run `wsfold summon <worktree-ref>` or `wsfold summon-all`.
+- Occupied managed path: status reports `invalid`; inspect the path, preserve or move user-owned content if appropriate, then retry the relevant command.
 
 ## Visual Studio Code, Cursor, and Windsurf Integration
 
