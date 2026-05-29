@@ -86,12 +86,7 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		for _, ref := range refs {
-			if err := app.Dismiss(cwd, ref); err != nil {
-				return err
-			}
-		}
-		return nil
+		return app.DismissMany(cwd, refs)
 	case "worktree":
 		opts, repoRef, branch, err := parseWorktreeArgs(args, stderr)
 		if err != nil {
@@ -176,7 +171,7 @@ func runWorktreeCommand(app *wsfold.App, cwd string, repoRef string, branch stri
 	}
 
 	if strings.TrimSpace(branch) == "" {
-		candidates, err := app.WorktreeBranchCandidates(repoRef)
+		candidates, err := app.WorktreeBranchCandidates(cwd, repoRef)
 		if err != nil {
 			return err
 		}
@@ -193,7 +188,7 @@ func runWorktreeCommand(app *wsfold.App, cwd string, repoRef string, branch stri
 		}
 		branch = refs[0]
 		if !opts.CreateBranch {
-			existing, err := app.WorktreeBranchCandidates(repoRef)
+			existing, err := app.WorktreeBranchCandidates(cwd, repoRef)
 			if err != nil {
 				return err
 			}

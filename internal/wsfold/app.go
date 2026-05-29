@@ -82,10 +82,11 @@ func (a *App) Init(cwd string) error {
 	}
 
 	manifest := Manifest{
-		Version:     manifestVersion,
-		PrimaryRoot: primaryRoot,
-		Trusted:     []Entry{},
-		External:    []Entry{},
+		Version:          manifestVersion,
+		PrimaryRoot:      primaryRoot,
+		Trusted:          []Entry{},
+		External:         []Entry{},
+		ManagedWorktrees: []ManagedWorktreeEntry{},
 	}
 
 	if err := saveManifest(primaryRoot, manifest); err != nil {
@@ -113,6 +114,9 @@ func (a *App) summon(cwd string, ref string, requested TrustClass) error {
 	repo, err := findOrCloneRepo(cfg, a.Runner, a.Stdout, ref, requested)
 	if err != nil {
 		return err
+	}
+	if requested == TrustClassTrusted && repo.IsWorktree {
+		return fmt.Errorf("summon does not attach unmanaged Git worktrees; create managed task worktrees with `wsfold worktree`")
 	}
 
 	return a.attachRepo(primaryRoot, cfg, repo, requested)
@@ -153,27 +157,110 @@ func (a *App) Worktree(cwd string, ref string, branch string, opts WorktreeOptio
 		return err
 	}
 
-	baseFolder := completionFolderName(source.CheckoutPath)
-	folderName := strings.TrimSpace(opts.Name)
-	if folderName == "" {
-		folderName = defaultWorktreeFolderName(baseFolder, branch)
+	primaryEntry, manifest, err := a.ensurePrimaryAttachmentForWorktree(primaryRoot, cfg, source)
+	if err != nil {
+		return err
 	}
-	targetPath := filepath.Join(cfg.TrustedDir, folderName)
-	if _, err := os.Stat(targetPath); err == nil {
-		return fmt.Errorf("worktree destination %s already exists", targetPath)
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("stat worktree destination %s: %w", targetPath, err)
+	previous := cloneManifest(manifest)
+
+	if worktreeBranches, err := listWorktreeBranchPaths(a.Runner, primaryEntry.MountPath); err != nil {
+		return err
+	} else if worktreePath := strings.TrimSpace(worktreeBranches[branch]); worktreePath != "" {
+		return fmt.Errorf("branch %q is already checked out by worktree at %s", branch, worktreePath)
 	}
 
-	if err := createGitWorktree(a.Runner, source.CheckoutPath, targetPath, branch, opts.CreateBranch, existingSourceRef); err != nil {
+	targetPath, err := chooseManagedWorktreePath(primaryRoot, primaryEntry.MountPath, branch, opts.Name, manifest)
+	if err != nil {
 		return err
 	}
 
-	repo := buildRepo(targetPath, TrustClassTrusted, a.Runner)
-	if !repo.IsWorktree {
-		return fmt.Errorf("created checkout at %s is not recognized as a worktree", targetPath)
+	if err := createGitWorktree(a.Runner, primaryEntry.MountPath, targetPath, branch, opts.CreateBranch, existingSourceRef); err != nil {
+		return err
 	}
-	return a.attachRepo(primaryRoot, cfg, repo, TrustClassTrusted)
+
+	entry := ManagedWorktreeEntry{
+		RepoRef:             managedWorktreeRepoRef(primaryEntry.RepoRef, source, branch),
+		Branch:              branch,
+		WorkspacePath:       targetPath,
+		PrimaryRepoRef:      primaryEntry.RepoRef,
+		PrimaryCheckoutPath: primaryEntry.CheckoutPath,
+		PrimaryMountPath:    primaryEntry.MountPath,
+		ControlMode:         WorktreeControlWorkspaceMountedPrimary,
+		Owner:               ManagedWorktreeOwnerWSFold,
+		CreationSource:      "wsfold worktree",
+	}
+	if _, _, err := validateManagedWorktreeControlPath(entry, primaryEntry); err != nil {
+		return fmt.Errorf("created worktree did not satisfy workspace-local control path contract: %w", err)
+	}
+
+	manifest.UpsertManagedWorktree(entry)
+	if err := saveManifest(primaryRoot, manifest); err != nil {
+		return err
+	}
+	if err := writeWorkspace(primaryRoot, previous, manifest, cfg.ProjectsDirName); err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintln(a.Stdout, formatManagedWorktreeSuccess(entry, primaryRoot))
+	return nil
+}
+
+func (a *App) ensurePrimaryAttachmentForWorktree(primaryRoot string, cfg Config, source WorktreeSource) (Entry, Manifest, error) {
+	manifest, err := loadManifest(primaryRoot)
+	if err != nil {
+		return Entry{}, Manifest{}, err
+	}
+	if entry, ok := findPrimaryAttachmentForSource(manifest, source.Repo); ok {
+		if !isGitRepo(entry.MountPath) {
+			return Entry{}, Manifest{}, fmt.Errorf("primary repository %s is declared but unavailable at %s; summon or repair it before creating a worktree", entry.RepoRef, entry.MountPath)
+		}
+		return entry, manifest, nil
+	}
+
+	if err := a.attachRepo(primaryRoot, cfg, source.Repo, TrustClassTrusted); err != nil {
+		return Entry{}, Manifest{}, err
+	}
+	manifest, err = loadManifest(primaryRoot)
+	if err != nil {
+		return Entry{}, Manifest{}, err
+	}
+	entry, ok := findPrimaryAttachmentForSource(manifest, source.Repo)
+	if !ok {
+		return Entry{}, Manifest{}, fmt.Errorf("primary repository %s was not attached before worktree creation", source.DisplayRef())
+	}
+	return entry, manifest, nil
+}
+
+func findPrimaryAttachmentForSource(manifest Manifest, source Repo) (Entry, bool) {
+	for _, entry := range manifest.Trusted {
+		if filepath.Clean(entry.CheckoutPath) == filepath.Clean(source.CheckoutPath) {
+			return entry, true
+		}
+	}
+	sourceRef := normalizeRepoRef(source.DisplayRef())
+	for _, entry := range manifest.Trusted {
+		if normalizeRepoRef(entry.RepoRef) == sourceRef {
+			return entry, true
+		}
+	}
+	if source.Slug != "" {
+		for _, entry := range manifest.Trusted {
+			if owner, name, ok := parseGitHubSlug(entry.RepoRef); ok && owner+"/"+name == source.Slug {
+				return entry, true
+			}
+		}
+	}
+	return Entry{}, false
+}
+
+func managedWorktreeRepoRef(primaryRef string, source WorktreeSource, branch string) string {
+	if owner, name, ok := parseGitHubSlug(primaryRef); ok {
+		return owner + "/" + name + "/" + strings.TrimSpace(branch)
+	}
+	if source.Slug != "" {
+		return source.Slug + "/" + strings.TrimSpace(branch)
+	}
+	return strings.TrimSpace(primaryRef) + "/" + strings.TrimSpace(branch)
 }
 
 func (a *App) attachRepo(primaryRoot string, cfg Config, repo Repo, requested TrustClass) error {
@@ -237,11 +324,14 @@ func (a *App) attachRepo(primaryRoot string, cfg Config, repo Repo, requested Tr
 }
 
 func (a *App) Dismiss(cwd string, ref string) error {
+	return a.DismissMany(cwd, []string{ref})
+}
+
+func (a *App) DismissMany(cwd string, refs []string) error {
 	cfg, err := LoadConfig()
 	if err != nil {
 		return err
 	}
-	_ = cfg
 
 	primaryRoot, err := resolveWorkspaceRoot(cwd)
 	if err != nil {
@@ -252,14 +342,73 @@ func (a *App) Dismiss(cwd string, ref string) error {
 	if err != nil {
 		return err
 	}
+
+	type resolvedDismiss struct {
+		ref      string
+		entry    Entry
+		worktree ManagedWorktreeEntry
+		managed  bool
+	}
+	resolved := make([]resolvedDismiss, 0, len(refs))
+	for _, ref := range refs {
+		if worktree, ok, err := resolveManagedWorktreeEntry(manifest, ref); err != nil {
+			return err
+		} else if ok {
+			resolved = append(resolved, resolvedDismiss{ref: ref, worktree: worktree, managed: true})
+			continue
+		}
+
+		entry, ok, err := resolveManifestEntry(manifest, ref, a.Runner)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("%s repository or managed worktree %q is not part of the current workspace composition", ansiRedBold+"✗"+ansiReset, ref)
+		}
+		resolved = append(resolved, resolvedDismiss{ref: ref, entry: entry})
+	}
+
+	for _, item := range resolved {
+		if !item.managed {
+			continue
+		}
+		var err error
+		manifest, err = loadManifest(primaryRoot)
+		if err != nil {
+			return err
+		}
+		if err := a.dismissManagedWorktree(primaryRoot, cfg, manifest, item.worktree); err != nil {
+			return err
+		}
+	}
+	for _, item := range resolved {
+		if item.managed {
+			continue
+		}
+		var err error
+		manifest, err = loadManifest(primaryRoot)
+		if err != nil {
+			return err
+		}
+		if err := a.dismissRepoEntry(primaryRoot, cfg, manifest, item.entry); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *App) dismissRepoEntry(primaryRoot string, cfg Config, manifest Manifest, entry Entry) error {
 	previous := cloneManifest(manifest)
 
-	entry, ok, err := resolveManifestEntry(manifest, ref, a.Runner)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("%s repository %q is not part of the current workspace composition", ansiRedBold+"✗"+ansiReset, ref)
+	if entry.TrustClass == TrustClassTrusted {
+		dependents := dependentManagedWorktrees(manifest, entry)
+		if len(dependents) > 0 {
+			names := make([]string, 0, len(dependents))
+			for _, dependent := range dependents {
+				names = append(names, dependent.RepoRef)
+			}
+			return fmt.Errorf("trusted repository %s cannot be dismissed while managed worktrees depend on it: %s", entry.RepoRef, strings.Join(names, ", "))
+		}
 	}
 
 	if entry.TrustClass == TrustClassTrusted && entry.MountPath != "" {
@@ -304,6 +453,56 @@ func (a *App) Dismiss(cwd string, ref string) error {
 
 	_, _ = fmt.Fprintln(a.Stdout, formatDismissSuccess(entry))
 	return nil
+}
+
+func (a *App) dismissManagedWorktree(primaryRoot string, cfg Config, manifest Manifest, entry ManagedWorktreeEntry) error {
+	previous := cloneManifest(manifest)
+	inspection := InspectManagedWorktree(manifest, entry, a.Runner)
+	switch inspection.State {
+	case ManagedWorktreeHealthy:
+		if _, err := a.Runner.Git(inspection.PrimaryEntry.MountPath, "worktree", "remove", entry.WorkspacePath); err != nil {
+			return fmt.Errorf("remove managed worktree %s: %w", entry.RepoRef, err)
+		}
+	case ManagedWorktreeMissing:
+		// Missing managed paths contain no directory to delete; this is manifest-only cleanup.
+	default:
+		return fmt.Errorf("managed worktree %s cannot be dismissed automatically: %s", entry.RepoRef, inspection.Reason)
+	}
+
+	manifest.RemoveManagedWorktree(entry)
+	if err := saveManifest(primaryRoot, manifest); err != nil {
+		return err
+	}
+	if err := writeWorkspace(primaryRoot, previous, manifest, cfg.ProjectsDirName); err != nil {
+		return err
+	}
+
+	if inspection.State == ManagedWorktreeMissing {
+		_, _ = fmt.Fprintln(a.Stdout, formatManagedWorktreeRecordDismissSuccess(entry))
+		return nil
+	}
+	_, _ = fmt.Fprintln(a.Stdout, formatManagedWorktreeDismissSuccess(entry))
+	return nil
+}
+
+func dependentManagedWorktrees(manifest Manifest, primary Entry) []ManagedWorktreeEntry {
+	dependents := make([]ManagedWorktreeEntry, 0)
+	for _, entry := range manifest.ManagedWorktrees {
+		if managedWorktreeDependsOnPrimary(entry, primary) {
+			dependents = append(dependents, entry)
+		}
+	}
+	return dependents
+}
+
+func managedWorktreeDependsOnPrimary(entry ManagedWorktreeEntry, primary Entry) bool {
+	if strings.TrimSpace(entry.PrimaryMountPath) != "" && strings.TrimSpace(primary.MountPath) != "" {
+		return filepath.Clean(entry.PrimaryMountPath) == filepath.Clean(primary.MountPath)
+	}
+	if strings.TrimSpace(entry.PrimaryCheckoutPath) != "" && strings.TrimSpace(primary.CheckoutPath) != "" {
+		return filepath.Clean(entry.PrimaryCheckoutPath) == filepath.Clean(primary.CheckoutPath)
+	}
+	return normalizeRepoRef(entry.PrimaryRepoRef) == normalizeRepoRef(primary.RepoRef)
 }
 
 func ensureTrustedSymlink(linkPath, target string) error {
@@ -377,6 +576,28 @@ func formatDismissSuccess(entry Entry) string {
 	default:
 		return fmt.Sprintf("%s Repository removed: %s", icon, repoRef)
 	}
+}
+
+func formatManagedWorktreeSuccess(entry ManagedWorktreeEntry, primaryRoot string) string {
+	check := ansiGreenBold + "✓" + ansiReset
+	repoRef := ansiCyanBold + entry.RepoRef + ansiReset
+	displayPath := entry.WorkspacePath
+	if rel, err := filepath.Rel(primaryRoot, entry.WorkspacePath); err == nil && rel != "" {
+		displayPath = rel
+	}
+	return fmt.Sprintf("%s Managed worktree created: %s at %s", check, repoRef, ansiYellowBold+displayPath+ansiReset)
+}
+
+func formatManagedWorktreeDismissSuccess(entry ManagedWorktreeEntry) string {
+	icon := ansiRedBold + "-" + ansiReset
+	repoRef := ansiCyanBold + entry.RepoRef + ansiReset
+	return fmt.Sprintf("%s Managed worktree removed: %s", icon, repoRef)
+}
+
+func formatManagedWorktreeRecordDismissSuccess(entry ManagedWorktreeEntry) string {
+	icon := ansiRedBold + "-" + ansiReset
+	repoRef := ansiCyanBold + entry.RepoRef + ansiReset
+	return fmt.Sprintf("%s Managed worktree record removed: %s", icon, repoRef)
 }
 
 func removeTrustedSymlink(linkPath string) error {

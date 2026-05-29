@@ -175,6 +175,106 @@ func TestManifestRejectsInvalidTrustedMountPaths(t *testing.T) {
 	}
 }
 
+func TestManifestPreservesManagedWorktreeState(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	manifest := Manifest{
+		Version:     manifestVersion,
+		PrimaryRoot: root,
+		Trusted: []Entry{
+			{RepoRef: "acme/service", CheckoutPath: "/trusted/service", TrustClass: TrustClassTrusted, Backend: AttachmentBackendSymlink, MountPath: filepath.Join(root, "service")},
+		},
+		ManagedWorktrees: []ManagedWorktreeEntry{
+			{
+				RepoRef:             "acme/service/feature/task",
+				Branch:              "feature/task",
+				WorkspacePath:       filepath.Join(root, "service-feature-task"),
+				PrimaryRepoRef:      "acme/service",
+				PrimaryCheckoutPath: "/trusted/service",
+				PrimaryMountPath:    filepath.Join(root, "service"),
+				ControlMode:         WorktreeControlWorkspaceMountedPrimary,
+				Owner:               ManagedWorktreeOwnerWSFold,
+				CreationSource:      "wsfold worktree",
+			},
+		},
+	}
+
+	if err := saveManifest(root, manifest); err != nil {
+		t.Fatalf("saveManifest returned error: %v", err)
+	}
+	loaded, err := loadManifest(root)
+	if err != nil {
+		t.Fatalf("loadManifest returned error: %v", err)
+	}
+	if len(loaded.ManagedWorktrees) != 1 {
+		t.Fatalf("expected managed worktree entry, got %#v", loaded.ManagedWorktrees)
+	}
+	got := loaded.ManagedWorktrees[0]
+	if got.RepoRef != "acme/service/feature/task" || got.PrimaryMountPath != filepath.Join(root, "service") || got.ControlMode != WorktreeControlWorkspaceMountedPrimary {
+		t.Fatalf("managed worktree metadata was not preserved: %#v", got)
+	}
+}
+
+func TestManifestRejectsInvalidManagedWorktrees(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	primary := Entry{RepoRef: "acme/service", CheckoutPath: "/trusted/service", TrustClass: TrustClassTrusted, Backend: AttachmentBackendSymlink, MountPath: filepath.Join(root, "service")}
+	valid := ManagedWorktreeEntry{
+		RepoRef:             "acme/service/feature/task",
+		Branch:              "feature/task",
+		WorkspacePath:       filepath.Join(root, "service-feature-task"),
+		PrimaryRepoRef:      "acme/service",
+		PrimaryCheckoutPath: "/trusted/service",
+		PrimaryMountPath:    filepath.Join(root, "service"),
+		ControlMode:         WorktreeControlWorkspaceMountedPrimary,
+		Owner:               ManagedWorktreeOwnerWSFold,
+		CreationSource:      "wsfold worktree",
+	}
+
+	for name, entries := range map[string][]ManagedWorktreeEntry{
+		"duplicate-path": {
+			valid,
+			func() ManagedWorktreeEntry {
+				duplicate := valid
+				duplicate.RepoRef = "acme/service/feature/other"
+				duplicate.Branch = "feature/other"
+				return duplicate
+			}(),
+		},
+		"trusted-mount-collision": {
+			func() ManagedWorktreeEntry {
+				colliding := valid
+				colliding.WorkspacePath = primary.MountPath
+				return colliding
+			}(),
+		},
+		"branchless": {
+			func() ManagedWorktreeEntry {
+				branchless := valid
+				branchless.Branch = ""
+				return branchless
+			}(),
+		},
+		"duplicate-primary-branch": {
+			valid,
+			func() ManagedWorktreeEntry {
+				duplicate := valid
+				duplicate.WorkspacePath = filepath.Join(root, "service-feature-task-2")
+				return duplicate
+			}(),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := saveManifest(root, Manifest{Version: manifestVersion, PrimaryRoot: root, Trusted: []Entry{primary}, ManagedWorktrees: entries})
+			if err == nil {
+				t.Fatal("expected saveManifest to reject invalid managed worktree entries")
+			}
+		})
+	}
+}
+
 func TestResolveManifestEntryReturnsAmbiguityErrorWithFullRepoGuidance(t *testing.T) {
 	manifest := Manifest{
 		Trusted: []Entry{

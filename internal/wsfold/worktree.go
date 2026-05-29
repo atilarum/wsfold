@@ -66,7 +66,7 @@ func resolveWorktreeSource(cfg Config, runner Runner, ref string) (WorktreeSourc
 	}, nil
 }
 
-func (a *App) WorktreeBranchCandidates(ref string) ([]CompletionCandidate, error) {
+func (a *App) WorktreeBranchCandidates(cwd string, ref string) ([]CompletionCandidate, error) {
 	cfg, err := LoadConfig()
 	if err != nil {
 		return nil, err
@@ -81,6 +81,11 @@ func (a *App) WorktreeBranchCandidates(ref string) ([]CompletionCandidate, error
 	if err != nil {
 		return nil, err
 	}
+	worktreeBranches, err := worktreeBranchPathsForSource(source, a.Runner)
+	if err != nil {
+		return nil, err
+	}
+	attachedBranches := managedWorktreeBranchFolders(cwd, source)
 
 	branches := make([]string, 0, len(branchMap))
 	for branch := range branchMap {
@@ -90,15 +95,56 @@ func (a *App) WorktreeBranchCandidates(ref string) ([]CompletionCandidate, error
 
 	candidates := make([]CompletionCandidate, 0, len(branches))
 	for _, branch := range branches {
-		candidates = append(candidates, CompletionCandidate{
-			Key:         "branch|" + branch,
-			Value:       branch,
-			Name:        branch,
-			Description: "existing branch",
-			Source:      CompletionSourceLocal,
-		})
+		candidate := CompletionCandidate{
+			Key:    "branch|" + branch,
+			Value:  branch,
+			Name:   branch,
+			Source: CompletionSourceLocal,
+		}
+		if folder := strings.TrimSpace(attachedBranches[branch]); folder != "" {
+			candidate.Attached = true
+			candidate.Disabled = true
+			candidate.Branch = branch
+			candidate.Description = folder
+		} else if worktreePath := strings.TrimSpace(worktreeBranches[branch]); worktreePath != "" {
+			candidate.Disabled = true
+			candidate.Branch = branch
+			candidate.Description = filepath.Base(worktreePath)
+		}
+		candidates = append(candidates, candidate)
 	}
 	return candidates, nil
+}
+
+func managedWorktreeBranchFolders(cwd string, source WorktreeSource) map[string]string {
+	branches := map[string]string{}
+	primaryRoot, err := resolveWorkspaceRoot(cwd)
+	if err != nil {
+		return branches
+	}
+	manifest, err := loadManifest(primaryRoot)
+	if err != nil {
+		return branches
+	}
+	for _, entry := range manifest.ManagedWorktrees {
+		if entry.UnsupportedLegacy || strings.TrimSpace(entry.Branch) == "" {
+			continue
+		}
+		if managedWorktreeEntryMatchesSource(entry, source) {
+			branches[entry.Branch] = filepath.Base(entry.WorkspacePath)
+		}
+	}
+	return branches
+}
+
+func managedWorktreeEntryMatchesSource(entry ManagedWorktreeEntry, source WorktreeSource) bool {
+	if strings.TrimSpace(entry.PrimaryCheckoutPath) != "" && strings.TrimSpace(source.CheckoutPath) != "" {
+		return filepath.Clean(entry.PrimaryCheckoutPath) == filepath.Clean(source.CheckoutPath)
+	}
+	if source.Slug != "" {
+		return normalizeRepoRef(entry.PrimaryRepoRef) == normalizeRepoRef(source.Slug)
+	}
+	return normalizeRepoRef(entry.PrimaryRepoRef) == normalizeRepoRef(source.DisplayRef())
 }
 
 func worktreeBranchMapForSource(source WorktreeSource, runner Runner) (map[string]string, error) {
@@ -106,6 +152,40 @@ func worktreeBranchMapForSource(source WorktreeSource, runner Runner) (map[strin
 		return listRemoteBranches(runner, source.Owner, source.Name)
 	}
 	return listLocalBranches(runner, source.CheckoutPath)
+}
+
+func worktreeBranchPathsForSource(source WorktreeSource, runner Runner) (map[string]string, error) {
+	if source.Remote {
+		return map[string]string{}, nil
+	}
+	return listWorktreeBranchPaths(runner, source.CheckoutPath)
+}
+
+func listWorktreeBranchPaths(runner Runner, repoPath string) (map[string]string, error) {
+	output, err := runner.Git(repoPath, "worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, fmt.Errorf("list worktrees for %s: %w", repoPath, err)
+	}
+
+	branches := map[string]string{}
+	currentPath := ""
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			currentPath = ""
+			continue
+		}
+		if path, ok := strings.CutPrefix(line, "worktree "); ok {
+			currentPath = strings.TrimSpace(path)
+			continue
+		}
+		branch, ok := strings.CutPrefix(line, "branch refs/heads/")
+		if !ok || currentPath == "" {
+			continue
+		}
+		branches[strings.TrimSpace(branch)] = currentPath
+	}
+	return branches, nil
 }
 
 func ensureWorktreeSourceReady(source WorktreeSource, runner Runner, stdout io.Writer) (WorktreeSource, error) {
@@ -148,6 +228,74 @@ func createGitWorktree(runner Runner, repoPath string, targetPath string, branch
 
 	if _, err := runner.Git(repoPath, args...); err != nil {
 		return fmt.Errorf("create worktree %s for branch %s: %w", targetPath, branch, err)
+	}
+	return nil
+}
+
+func chooseManagedWorktreePath(primaryRoot string, primaryMountPath string, branch string, explicitName string, manifest Manifest) (string, error) {
+	folderName := strings.TrimSpace(explicitName)
+	if folderName != "" {
+		if filepath.Base(folderName) != folderName || folderName == "." || folderName == ".." {
+			return "", fmt.Errorf("worktree name %q must be a single folder name", explicitName)
+		}
+		targetPath := filepath.Join(primaryRoot, folderName)
+		if err := ensureManagedWorktreeDestinationAvailable(targetPath, manifest); err != nil {
+			return "", err
+		}
+		return targetPath, nil
+	}
+
+	base := defaultWorktreeFolderName(filepath.Base(primaryMountPath), branch)
+	for i := 0; ; i++ {
+		name := base
+		if i > 0 {
+			name = fmt.Sprintf("%s-%d", base, i+1)
+		}
+		targetPath := filepath.Join(primaryRoot, name)
+		err := ensureManagedWorktreeDestinationAvailable(targetPath, manifest)
+		if err == nil {
+			return targetPath, nil
+		}
+		if !isWorktreeDestinationCollision(err) {
+			return "", err
+		}
+	}
+}
+
+type worktreeDestinationCollisionError struct {
+	path string
+}
+
+func (e worktreeDestinationCollisionError) Error() string {
+	return fmt.Sprintf("worktree destination %s already exists or is managed", e.path)
+}
+
+func isWorktreeDestinationCollision(err error) bool {
+	_, ok := err.(worktreeDestinationCollisionError)
+	return ok
+}
+
+func ensureManagedWorktreeDestinationAvailable(targetPath string, manifest Manifest) error {
+	cleanTarget := filepath.Clean(targetPath)
+	for _, entry := range manifest.Trusted {
+		if filepath.Clean(entry.MountPath) == cleanTarget {
+			return worktreeDestinationCollisionError{path: cleanTarget}
+		}
+	}
+	for _, entry := range manifest.External {
+		if filepath.Clean(entry.CheckoutPath) == cleanTarget {
+			return worktreeDestinationCollisionError{path: cleanTarget}
+		}
+	}
+	for _, entry := range manifest.ManagedWorktrees {
+		if filepath.Clean(entry.WorkspacePath) == cleanTarget {
+			return worktreeDestinationCollisionError{path: cleanTarget}
+		}
+	}
+	if _, err := os.Stat(cleanTarget); err == nil {
+		return worktreeDestinationCollisionError{path: cleanTarget}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat worktree destination %s: %w", cleanTarget, err)
 	}
 	return nil
 }

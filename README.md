@@ -101,13 +101,10 @@ wsfold summon service-name
 # Attach a trusted repository by GitHub owner/repo name, cloning on demand if trusted.
 wsfold summon org_name/service-name
 
-# Attach a local worktree by GitHub owner/repo/branch.
-wsfold summon org_name/service-name/feature/my-branch
-
-# Create and attach a trusted local worktree on an existing branch.
+# Create a workspace-local managed worktree on an existing branch.
 wsfold worktree org_name/service-name release/2026-q1
 
-# Create and attach a trusted local worktree on a new branch.
+# Create a workspace-local managed worktree on a new branch.
 wsfold worktree --create-branch org_name/service-name agent/refactor
 
 # Dismiss a repository interactively.
@@ -131,10 +128,10 @@ Commands:
   Add an external repository as a workspace root. Only works with repositories already present under `WSFOLD_EXTERNAL_DIR`. Without `repo-ref`, opens an interactive picker.
 
 - `wsfold dismiss [repo-ref]`
-  Remove a repository from the current workspace composition. Without `repo-ref`, opens an interactive picker of attached repositories.
+  Remove a repository or clean managed worktree from the current workspace composition. Managed worktrees can be dismissed only when they are branch-backed, clean, and their primary repository attachment is available through the workspace. Dismiss removes the worktree directory and manifest entry, but preserves the branch and commits. A primary trusted repository cannot be dismissed while managed worktrees still depend on it; selecting the worktrees and the primary repository together processes the worktrees first.
 
 - `wsfold worktree [repo-ref] [branch]`
-  Create a trusted local Git worktree under `WSFOLD_TRUSTED_DIR` and attach it to the current workspace immediately. With no positional arguments, the command runs in fully interactive mode: it opens a single-select source picker first and then a single-select branch picker. If `repo-ref` is provided but `branch` is omitted, the command skips the source picker and opens the branch picker for that repository. The branch picker lets you search existing branches or type a new branch name. Use `--create-branch` in non-interactive mode to force creation of a new branch, and `--name` to override the generated checkout folder name.
+  Create a WSFold-managed Git worktree directly under the active workspace. The command first ensures the trusted primary repository is summoned into the workspace, then runs Git worktree creation from that workspace-visible primary attachment. With no positional arguments, the command runs in fully interactive mode: it opens a single-select source picker first and then a single-select branch picker. If `repo-ref` is provided but `branch` is omitted, the command skips the source picker and opens the branch picker for that repository. The branch picker lets you search existing branches or type a new branch name. Use `--create-branch` in non-interactive mode to force creation of a new branch. Default folder names use `<primary-folder>-<branch-slug>`, and `--name` overrides only the workspace-local folder name.
 
 - `wsfold reindex`
   Refresh the trusted GitHub remote cache. By default, the cache is refreshed in the background when `wsfold summon` opens and has a 24-hour lifetime. Use `reindex` to refresh it earlier.
@@ -142,11 +139,11 @@ Commands:
 `[repo-ref]` accepts three forms:
 - a local folder name
 - a GitHub repository reference in `owner/name` form
-- a local worktree reference in `owner/name/branch` form
+- a managed worktree reference in `owner/name/branch` form after that worktree exists
 
-`owner/name` always refers to the primary checkout for that repository. If you want a linked worktree checkout, use `owner/name/branch` or the local folder name. Attached repositories appear in the generated `.code-workspace` file under their local checkout directory names, so a primary checkout and one or more worktrees can coexist in the same workspace.
+`owner/name` always refers to the primary checkout for that repository. New task worktrees are created with `wsfold worktree`, not by attaching arbitrary existing Git worktree directories with `wsfold summon`. `summon` offers trusted primary repositories and trusted remote repositories; unmanaged worktrees under `WSFOLD_TRUSTED_DIR` are not new attachment candidates. Attached repositories and managed worktrees appear in the generated `.code-workspace` file under their workspace folder names, so a primary checkout and one or more task worktrees can coexist in the same workspace.
 
-`wsfold worktree` is intentionally environment-local in v1. The created worktree is valid in the environment where the command runs, but `wsfold` does not try to make the same checkout portable across different absolute-path environments such as host and container filesystems.
+`wsfold worktree` is intentionally workspace-local. The created worktree depends on the primary repository attachment that is visible in the active workspace because its Git control path is tied to that primary checkout. External worktree inventory, adoption, and cleanup are outside this command's scope.
 
 ## Visual Studio Code, Cursor, and Windsurf Integration
 

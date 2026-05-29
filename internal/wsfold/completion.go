@@ -60,7 +60,7 @@ func (a *App) TrustedSummonPickerState(cwd string) (TrustedSummonPickerState, er
 	}
 
 	return TrustedSummonPickerState{
-		Candidates: mergeTrustedSummonCandidates(localCandidates, trustedRemoteCompletionCandidates(remoteState.Repos)),
+		Candidates: append(mergeTrustedSummonCandidates(localCandidates, trustedRemoteCompletionCandidates(remoteState.Repos)), managedWorktreeCompletionCandidates(cwd, true, "")...),
 		Refreshing: remoteState.NeedsRefresh && remoteState.GitHubReady,
 		Status:     remoteState.StatusMessage,
 	}, nil
@@ -105,7 +105,7 @@ func (a *App) WorktreeSourcePickerState(cwd string) (TrustedSummonPickerState, e
 	}
 
 	return TrustedSummonPickerState{
-		Candidates: mergeWorktreeSourceCandidates(localCandidates, trustedRemoteCompletionCandidates(remoteState.Repos)),
+		Candidates: append(mergeWorktreeSourceCandidates(localCandidates, trustedRemoteCompletionCandidates(remoteState.Repos)), managedWorktreeCompletionCandidates(cwd, true, "")...),
 		Refreshing: remoteState.NeedsRefresh && remoteState.GitHubReady,
 		Status:     remoteState.StatusMessage,
 	}, nil
@@ -143,9 +143,15 @@ func (a *App) completeRepoIndex(cwd string, prefix string, requested TrustClass)
 	if err != nil {
 		return nil, err
 	}
+	if requested == TrustClassTrusted {
+		repos = filterPrimaryRepos(repos)
+	}
 
 	attached := attachedCheckoutPaths(cwd)
 	candidates := completionCandidatesFromRepos(repos, attached, prefix)
+	if requested == TrustClassTrusted {
+		candidates = append(candidates, managedWorktreeCompletionCandidates(cwd, true, prefix)...)
+	}
 
 	sortCandidates(candidates)
 	return candidates, nil
@@ -177,6 +183,7 @@ func trustedLocalCompletionCandidates(cwd string, root string, runner Runner) ([
 	if err != nil {
 		return nil, err
 	}
+	repos = filterPrimaryRepos(repos)
 	return completionCandidatesFromRepos(repos, attachedCheckoutPaths(cwd), ""), nil
 }
 
@@ -259,9 +266,82 @@ func (a *App) completeManifest(cwd string, prefix string) ([]CompletionCandidate
 			Source:      CompletionSourceLocal,
 		})
 	}
+	for _, entry := range manifest.ManagedWorktrees {
+		if entry.UnsupportedLegacy {
+			continue
+		}
+		value := entry.RepoRef
+		if prefix != "" && !strings.HasPrefix(strings.ToLower(value), strings.ToLower(prefix)) {
+			continue
+		}
+		candidates = append(candidates, CompletionCandidate{
+			Key:         entry.Key(),
+			Value:       value,
+			Description: completionDescription(entry.PrimaryRepoRef, entry.WorkspacePath),
+			Attached:    true,
+			TrustClass:  TrustClassTrusted,
+			Name:        completionFolderName(entry.WorkspacePath),
+			Slug:        slugFromRepoRef(entry.PrimaryRepoRef),
+			Branch:      entry.Branch,
+			IsWorktree:  true,
+			Source:      CompletionSourceLocal,
+		})
+	}
 
 	sortCandidates(candidates)
 	return candidates, nil
+}
+
+func filterPrimaryRepos(repos []Repo) []Repo {
+	filtered := repos[:0]
+	for _, repo := range repos {
+		if repo.IsWorktree {
+			continue
+		}
+		filtered = append(filtered, repo)
+	}
+	return filtered
+}
+
+func managedWorktreeCompletionCandidates(cwd string, disabled bool, prefix string) []CompletionCandidate {
+	primaryRoot, err := resolveWorkspaceRoot(cwd)
+	if err != nil {
+		return nil
+	}
+	manifest, err := loadManifest(primaryRoot)
+	if err != nil {
+		return nil
+	}
+	candidates := make([]CompletionCandidate, 0, len(manifest.ManagedWorktrees))
+	for _, entry := range manifest.ManagedWorktrees {
+		if entry.UnsupportedLegacy {
+			continue
+		}
+		if prefix != "" && !strings.HasPrefix(strings.ToLower(entry.RepoRef), strings.ToLower(prefix)) {
+			continue
+		}
+		candidates = append(candidates, CompletionCandidate{
+			Key:         entry.Key(),
+			Value:       entry.RepoRef,
+			Description: completionDescription(entry.PrimaryRepoRef, entry.WorkspacePath),
+			Attached:    true,
+			Disabled:    disabled,
+			TrustClass:  TrustClassTrusted,
+			Name:        completionFolderName(entry.WorkspacePath),
+			Slug:        slugFromRepoRef(entry.PrimaryRepoRef),
+			Branch:      entry.Branch,
+			IsWorktree:  true,
+			Source:      CompletionSourceLocal,
+		})
+	}
+	return candidates
+}
+
+func slugFromRepoRef(ref string) string {
+	if owner, name, ok := parseGitHubSlug(ref); ok {
+		return owner + "/" + name
+	}
+	return ""
 }
 
 func sortCandidates(candidates []CompletionCandidate) {
@@ -498,6 +578,9 @@ func attachedCheckoutPaths(cwd string) map[string]bool {
 	}
 	for _, entry := range manifest.External {
 		attached[entry.CheckoutPath] = true
+	}
+	for _, entry := range manifest.ManagedWorktrees {
+		attached[entry.WorkspacePath] = true
 	}
 
 	return attached

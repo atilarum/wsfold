@@ -462,7 +462,7 @@ func TestSummonSupportsLocalFolderAlias(t *testing.T) {
 	}
 }
 
-func TestSummonSupportsTrustedWorktreeByBranchRef(t *testing.T) {
+func TestSummonRejectsUnmanagedTrustedWorktreeByBranchRef(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnv(t, h)
 	initWorkspace(t, h)
@@ -481,8 +481,9 @@ func TestSummonSupportsTrustedWorktreeByBranchRef(t *testing.T) {
 	if err := app.Summon(h.Workspace, "acme/service"); err != nil {
 		t.Fatalf("Summon primary returned error: %v", err)
 	}
-	if err := app.Summon(h.Workspace, "acme/service/feature/worktree"); err != nil {
-		t.Fatalf("Summon worktree returned error: %v", err)
+	err := app.Summon(h.Workspace, "acme/service/feature/worktree")
+	if err == nil || !strings.Contains(err.Error(), "summon does not attach unmanaged Git worktrees") {
+		t.Fatalf("expected unmanaged worktree summon refusal, got %v", err)
 	}
 
 	primaryLinkTarget, err := os.Readlink(filepath.Join(h.Workspace, "service"))
@@ -493,12 +494,8 @@ func TestSummonSupportsTrustedWorktreeByBranchRef(t *testing.T) {
 		t.Fatalf("unexpected primary symlink target: %s", primaryLinkTarget)
 	}
 
-	worktreeLinkTarget, err := os.Readlink(filepath.Join(h.Workspace, "service-feature"))
-	if err != nil {
-		t.Fatalf("read worktree symlink: %v", err)
-	}
-	if worktreeLinkTarget != worktreePath {
-		t.Fatalf("unexpected worktree symlink target: %s", worktreeLinkTarget)
+	if _, err := os.Lstat(filepath.Join(h.Workspace, "service-feature")); !os.IsNotExist(err) {
+		t.Fatalf("expected unmanaged worktree not to be attached, got %v", err)
 	}
 
 	manifestBytes, err := os.ReadFile(manifestPath(h.Workspace))
@@ -508,8 +505,8 @@ func TestSummonSupportsTrustedWorktreeByBranchRef(t *testing.T) {
 	if !strings.Contains(string(manifestBytes), "repo_ref: acme/service\n") {
 		t.Fatalf("expected primary manifest entry, got:\n%s", string(manifestBytes))
 	}
-	if !strings.Contains(string(manifestBytes), "repo_ref: acme/service/feature/worktree\n") {
-		t.Fatalf("expected worktree manifest entry, got:\n%s", string(manifestBytes))
+	if strings.Contains(string(manifestBytes), "repo_ref: acme/service/feature/worktree\n") {
+		t.Fatalf("did not expect unmanaged worktree manifest entry, got:\n%s", string(manifestBytes))
 	}
 }
 
@@ -530,25 +527,19 @@ func TestWorktreeCreatesAndAttachesExistingLocalBranch(t *testing.T) {
 		t.Fatalf("Worktree returned error: %v", err)
 	}
 
-	worktreePath := filepath.Join(h.TrustedRoot, "service-feature-worktree")
+	worktreePath := filepath.Join(h.Workspace, "service-feature-worktree")
 	if _, err := os.Stat(filepath.Join(worktreePath, ".git")); err != nil {
 		t.Fatalf("expected created worktree checkout: %v", err)
 	}
 
-	target, err := os.Readlink(filepath.Join(h.Workspace, "service-feature-worktree"))
-	if err != nil {
-		t.Fatalf("read worktree symlink: %v", err)
-	}
-	if target != worktreePath {
-		t.Fatalf("unexpected worktree target: %s", target)
-	}
+	assertManagedWorktreeControlPath(t, filepath.Join(h.Workspace, "service"), worktreePath)
 
 	manifestBytes, err := os.ReadFile(manifestPath(h.Workspace))
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}
-	if !strings.Contains(string(manifestBytes), "repo_ref: acme/service/feature/worktree\n") {
-		t.Fatalf("expected attached worktree manifest entry, got:\n%s", string(manifestBytes))
+	if !strings.Contains(string(manifestBytes), "managed_worktrees:") || !strings.Contains(string(manifestBytes), "repo_ref: acme/service/feature/worktree\n") {
+		t.Fatalf("expected managed worktree manifest entry, got:\n%s", string(manifestBytes))
 	}
 }
 
@@ -568,17 +559,110 @@ func TestWorktreeCreatesNewBranchWithExplicitName(t *testing.T) {
 		t.Fatalf("Worktree returned error: %v", err)
 	}
 
-	worktreePath := filepath.Join(h.TrustedRoot, "custom-agent")
+	worktreePath := filepath.Join(h.Workspace, "custom-agent")
 	if branch := h.RunGit(worktreePath, "branch", "--show-current"); strings.TrimSpace(branch) != "agent/refactor" {
 		t.Fatalf("expected created branch checkout, got %q", branch)
 	}
 
-	target, err := os.Readlink(filepath.Join(h.Workspace, "custom-agent"))
+	assertManagedWorktreeControlPath(t, filepath.Join(h.Workspace, "service"), worktreePath)
+}
+
+func TestWorktreeBranchCandidatesDisableBranchesAlreadyCheckedOutByWorktrees(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	base := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(base)
+	h.RunGit(base, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.RunGit(base, "branch", "dg")
+	existingWorktree := filepath.Join(h.TrustedRoot, "service-dg")
+	h.RunGit(base, "worktree", "add", existingWorktree, "dg")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	candidates, err := app.WorktreeBranchCandidates(h.Workspace, "service")
 	if err != nil {
-		t.Fatalf("read worktree symlink: %v", err)
+		t.Fatalf("WorktreeBranchCandidates returned error: %v", err)
 	}
-	if target != worktreePath {
-		t.Fatalf("unexpected worktree symlink target: %s", target)
+
+	var dg CompletionCandidate
+	for _, candidate := range candidates {
+		if candidate.Value == "dg" {
+			dg = candidate
+			break
+		}
+	}
+	if dg.Value == "" {
+		t.Fatalf("expected dg branch candidate, got %#v", candidates)
+	}
+	if !dg.Disabled || dg.Attached || dg.Branch != "dg" {
+		t.Fatalf("expected dg branch to be disabled as a used worktree, got %#v", dg)
+	}
+	if dg.Description != filepath.Base(existingWorktree) {
+		t.Fatalf("expected existing worktree folder in description, got %#v", dg)
+	}
+}
+
+func TestWorktreeBranchCandidatesMarkManagedWorktreesAsAttached(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	base := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(base)
+	h.RunGit(base, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.RunGit(base, "branch", "feature/worktree")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Worktree(h.Workspace, "service", "feature/worktree", WorktreeOptions{}); err != nil {
+		t.Fatalf("Worktree returned error: %v", err)
+	}
+
+	candidates, err := app.WorktreeBranchCandidates(h.Workspace, "service")
+	if err != nil {
+		t.Fatalf("WorktreeBranchCandidates returned error: %v", err)
+	}
+	var worktree CompletionCandidate
+	for _, candidate := range candidates {
+		if candidate.Value == "feature/worktree" {
+			worktree = candidate
+			break
+		}
+	}
+	if worktree.Value == "" {
+		t.Fatalf("expected feature/worktree branch candidate, got %#v", candidates)
+	}
+	if !worktree.Attached || !worktree.Disabled {
+		t.Fatalf("expected managed worktree branch to be attached and disabled, got %#v", worktree)
+	}
+	if worktree.Description != "service-feature-worktree" {
+		t.Fatalf("expected managed worktree folder in description, got %#v", worktree)
+	}
+}
+
+func TestWorktreeRejectsBranchAlreadyCheckedOutByWorktreeBeforeGitAdd(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	base := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(base)
+	h.RunGit(base, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.RunGit(base, "branch", "dg")
+	existingWorktree := filepath.Join(h.TrustedRoot, "service-dg")
+	h.RunGit(base, "worktree", "add", existingWorktree, "dg")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+
+	err := app.Worktree(h.Workspace, "service", "dg", WorktreeOptions{})
+	if err == nil || !strings.Contains(err.Error(), `branch "dg" is already checked out by worktree at `+existingWorktree) {
+		t.Fatalf("expected existing worktree branch refusal, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(h.Workspace, "service-dg")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected no workspace-local worktree to be created, got %v", statErr)
 	}
 }
 
@@ -613,10 +697,11 @@ func TestWorktreeClonesTrustedRemoteAndAttachesBranch(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(h.TrustedRoot, "service", ".git")); err != nil {
 		t.Fatalf("expected primary clone after remote source worktree: %v", err)
 	}
-	worktreePath := filepath.Join(h.TrustedRoot, "service-feature-remote")
+	worktreePath := filepath.Join(h.Workspace, "service-feature-remote")
 	if _, err := os.Stat(filepath.Join(worktreePath, ".git")); err != nil {
 		t.Fatalf("expected remote worktree checkout: %v", err)
 	}
+	assertManagedWorktreeControlPath(t, filepath.Join(h.Workspace, "service"), worktreePath)
 }
 
 func TestWorktreeRejectsMissingExistingBranchWithoutCreateFlag(t *testing.T) {
@@ -634,6 +719,271 @@ func TestWorktreeRejectsMissingExistingBranchWithoutCreateFlag(t *testing.T) {
 	err := app.Worktree(h.Workspace, "service", "missing/branch", WorktreeOptions{})
 	if err == nil || !strings.Contains(err.Error(), `use --create-branch to create it`) {
 		t.Fatalf("expected missing branch guidance, got %v", err)
+	}
+}
+
+func TestDismissManagedWorktreeRemovesDirectoryAndPreservesBranch(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	base := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(base)
+	h.RunGit(base, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.RunGit(base, "branch", "feature/worktree")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+
+	if err := app.Worktree(h.Workspace, "service", "feature/worktree", WorktreeOptions{}); err != nil {
+		t.Fatalf("Worktree returned error: %v", err)
+	}
+	worktreePath := filepath.Join(h.Workspace, "service-feature-worktree")
+	if err := os.WriteFile(filepath.Join(worktreePath, "feature.txt"), []byte("feature\n"), 0o644); err != nil {
+		t.Fatalf("write worktree file: %v", err)
+	}
+	h.RunGit(worktreePath, "add", "feature.txt")
+	h.RunGit(worktreePath, "commit", "-m", "feature worktree")
+
+	if err := app.Dismiss(h.Workspace, "acme/service/feature/worktree"); err != nil {
+		t.Fatalf("Dismiss managed worktree returned error: %v", err)
+	}
+	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+		t.Fatalf("expected managed worktree directory removal, got %v", err)
+	}
+	if branches := h.RunGit(filepath.Join(h.Workspace, "service"), "branch", "--list", "feature/worktree"); !strings.Contains(branches, "feature/worktree") {
+		t.Fatalf("expected branch to be preserved, got %q", branches)
+	}
+	manifest, err := loadManifest(h.Workspace)
+	if err != nil {
+		t.Fatalf("loadManifest returned error: %v", err)
+	}
+	if len(manifest.ManagedWorktrees) != 0 {
+		t.Fatalf("expected managed worktree manifest cleanup, got %#v", manifest.ManagedWorktrees)
+	}
+}
+
+func TestDismissManagedWorktreeRefusesDirtyBranchlessAndUnavailablePrimary(t *testing.T) {
+	for name, mutate := range map[string]func(t *testing.T, h *testutil.Harness, worktreePath string){
+		"dirty": func(t *testing.T, h *testutil.Harness, worktreePath string) {
+			if err := os.WriteFile(filepath.Join(worktreePath, "dirty.txt"), []byte("dirty\n"), 0o644); err != nil {
+				t.Fatalf("write dirty file: %v", err)
+			}
+		},
+		"branchless": func(t *testing.T, h *testutil.Harness, worktreePath string) {
+			head := strings.TrimSpace(h.RunGit(worktreePath, "rev-parse", "HEAD"))
+			h.RunGit(worktreePath, "checkout", "--detach", head)
+		},
+		"primary-unavailable": func(t *testing.T, h *testutil.Harness, worktreePath string) {
+			if err := os.Remove(filepath.Join(h.Workspace, "service")); err != nil {
+				t.Fatalf("remove primary attachment symlink: %v", err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := testutil.NewHarness(t)
+			setEnv(t, h)
+			initWorkspace(t, h)
+
+			base := filepath.Join(h.TrustedRoot, "service")
+			h.InitRepo(base)
+			h.RunGit(base, "remote", "add", "origin", "https://github.com/acme/service.git")
+			h.RunGit(base, "branch", "feature/worktree")
+
+			app := NewApp()
+			app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+			if err := app.Worktree(h.Workspace, "service", "feature/worktree", WorktreeOptions{}); err != nil {
+				t.Fatalf("Worktree returned error: %v", err)
+			}
+			worktreePath := filepath.Join(h.Workspace, "service-feature-worktree")
+			mutate(t, h, worktreePath)
+
+			err := app.Dismiss(h.Workspace, "acme/service/feature/worktree")
+			if err == nil || !strings.Contains(err.Error(), "cannot be dismissed automatically") {
+				t.Fatalf("expected guarded dismiss refusal, got %v", err)
+			}
+			if _, statErr := os.Stat(worktreePath); statErr != nil {
+				t.Fatalf("blocked managed worktree should remain, got %v", statErr)
+			}
+			manifest, loadErr := loadManifest(h.Workspace)
+			if loadErr != nil {
+				t.Fatalf("loadManifest returned error: %v", loadErr)
+			}
+			if len(manifest.ManagedWorktrees) != 1 {
+				t.Fatalf("blocked managed worktree manifest entry should remain, got %#v", manifest.ManagedWorktrees)
+			}
+		})
+	}
+}
+
+func TestDismissManagedWorktreeRefusesStaleManifestPathWhenBranchStillCheckedOut(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	base := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(base)
+	h.RunGit(base, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.RunGit(base, "branch", "feature/worktree")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Worktree(h.Workspace, "service", "feature/worktree", WorktreeOptions{}); err != nil {
+		t.Fatalf("Worktree returned error: %v", err)
+	}
+	worktreePath := filepath.Join(h.Workspace, "service-feature-worktree")
+	if err := os.WriteFile(filepath.Join(worktreePath, "dirty.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatalf("write dirty file: %v", err)
+	}
+
+	manifest, err := loadManifest(h.Workspace)
+	if err != nil {
+		t.Fatalf("loadManifest returned error: %v", err)
+	}
+	if len(manifest.ManagedWorktrees) != 1 {
+		t.Fatalf("expected one managed worktree, got %#v", manifest.ManagedWorktrees)
+	}
+	manifest.ManagedWorktrees[0].WorkspacePath = filepath.Join(h.Workspace, "service-feature-worktree-stale")
+	if err := saveManifest(h.Workspace, manifest); err != nil {
+		t.Fatalf("saveManifest returned error: %v", err)
+	}
+
+	err = app.Dismiss(h.Workspace, "acme/service/feature/worktree")
+	if err == nil || !strings.Contains(err.Error(), "branch feature/worktree is still checked out") || !strings.Contains(err.Error(), "changes") {
+		t.Fatalf("expected stale path dirty worktree refusal, got %v", err)
+	}
+	if _, statErr := os.Stat(worktreePath); statErr != nil {
+		t.Fatalf("blocked managed worktree should remain, got %v", statErr)
+	}
+	manifest, err = loadManifest(h.Workspace)
+	if err != nil {
+		t.Fatalf("loadManifest returned error: %v", err)
+	}
+	if len(manifest.ManagedWorktrees) != 1 {
+		t.Fatalf("blocked managed worktree manifest entry should remain, got %#v", manifest.ManagedWorktrees)
+	}
+}
+
+func TestDismissBlocksPrimaryUntilManagedWorktreesAreHandled(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	base := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(base)
+	h.RunGit(base, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.RunGit(base, "branch", "feature/worktree")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Worktree(h.Workspace, "service", "feature/worktree", WorktreeOptions{}); err != nil {
+		t.Fatalf("Worktree returned error: %v", err)
+	}
+
+	err := app.Dismiss(h.Workspace, "acme/service")
+	if err == nil || !strings.Contains(err.Error(), "cannot be dismissed while managed worktrees depend on it") {
+		t.Fatalf("expected dependency block, got %v", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(h.Workspace, "service")); statErr != nil {
+		t.Fatalf("primary attachment should remain after dependency block: %v", statErr)
+	}
+}
+
+func TestDismissDoesNotBlockUnrelatedCloneWithSameRepoRef(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	firstCheckout := filepath.Join(h.TrustedRoot, "service")
+	secondCheckout := filepath.Join(h.TrustedRoot, "service-copy")
+	h.InitRepo(firstCheckout)
+	h.RunGit(firstCheckout, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.InitRepo(secondCheckout)
+	h.RunGit(secondCheckout, "remote", "add", "origin", "https://github.com/acme/service.git")
+
+	firstMount := filepath.Join(h.Workspace, "service")
+	secondMount := filepath.Join(h.Workspace, "service-copy")
+	if err := os.Symlink(firstCheckout, firstMount); err != nil {
+		t.Fatalf("create first symlink: %v", err)
+	}
+	if err := os.Symlink(secondCheckout, secondMount); err != nil {
+		t.Fatalf("create second symlink: %v", err)
+	}
+
+	manifest := Manifest{
+		Version:     manifestVersion,
+		PrimaryRoot: h.Workspace,
+		Trusted: []Entry{
+			{RepoRef: "acme/service", CheckoutPath: firstCheckout, TrustClass: TrustClassTrusted, Backend: AttachmentBackendSymlink, MountPath: firstMount},
+			{RepoRef: "acme/service", CheckoutPath: secondCheckout, TrustClass: TrustClassTrusted, Backend: AttachmentBackendSymlink, MountPath: secondMount},
+		},
+		ManagedWorktrees: []ManagedWorktreeEntry{
+			{
+				RepoRef:             "acme/service/feature/worktree",
+				Branch:              "feature/worktree",
+				WorkspacePath:       filepath.Join(h.Workspace, "service-feature-worktree"),
+				PrimaryRepoRef:      "acme/service",
+				PrimaryCheckoutPath: firstCheckout,
+				PrimaryMountPath:    firstMount,
+				ControlMode:         WorktreeControlWorkspaceMountedPrimary,
+				Owner:               ManagedWorktreeOwnerWSFold,
+				CreationSource:      "wsfold worktree",
+			},
+		},
+	}
+	if err := saveManifest(h.Workspace, manifest); err != nil {
+		t.Fatalf("save manifest: %v", err)
+	}
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Dismiss(h.Workspace, "service-copy"); err != nil {
+		t.Fatalf("Dismiss unrelated clone returned error: %v", err)
+	}
+	if _, err := os.Lstat(secondMount); !os.IsNotExist(err) {
+		t.Fatalf("expected unrelated second clone attachment to be dismissed, got %v", err)
+	}
+	if _, err := os.Lstat(firstMount); err != nil {
+		t.Fatalf("dependent primary attachment should remain: %v", err)
+	}
+	loaded, err := loadManifest(h.Workspace)
+	if err != nil {
+		t.Fatalf("loadManifest returned error: %v", err)
+	}
+	if len(loaded.ManagedWorktrees) != 1 {
+		t.Fatalf("managed worktree should remain attached to first clone, got %#v", loaded.ManagedWorktrees)
+	}
+	if len(loaded.Trusted) != 1 || filepath.Clean(loaded.Trusted[0].MountPath) != filepath.Clean(firstMount) {
+		t.Fatalf("expected only first primary attachment to remain, got %#v", loaded.Trusted)
+	}
+}
+
+func TestDismissManyOrdersManagedWorktreesBeforePrimary(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	base := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(base)
+	h.RunGit(base, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.RunGit(base, "branch", "feature/worktree")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Worktree(h.Workspace, "service", "feature/worktree", WorktreeOptions{}); err != nil {
+		t.Fatalf("Worktree returned error: %v", err)
+	}
+
+	if err := app.DismissMany(h.Workspace, []string{"acme/service/feature/worktree", "acme/service"}); err != nil {
+		t.Fatalf("DismissMany returned error: %v", err)
+	}
+	for _, path := range []string{filepath.Join(h.Workspace, "service-feature-worktree"), filepath.Join(h.Workspace, "service")} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("expected %s to be removed, got %v", path, err)
+		}
+	}
+	if _, err := os.Stat(base); err != nil {
+		t.Fatalf("primary checkout should remain: %v", err)
 	}
 }
 
@@ -732,7 +1082,7 @@ func TestDismissTrustedAndExternalLifecycle(t *testing.T) {
 
 	if err := app.Dismiss(h.Workspace, "other/legacy-tool"); err == nil {
 		t.Fatal("expected repeat dismiss to fail once repo is no longer attached")
-	} else if !strings.Contains(err.Error(), `repository "other/legacy-tool" is not part of the current workspace composition`) {
+	} else if !strings.Contains(err.Error(), `repository or managed worktree "other/legacy-tool" is not part of the current workspace composition`) {
 		t.Fatalf("unexpected repeat dismiss error: %v", err)
 	}
 }
@@ -860,7 +1210,7 @@ func TestDismissReturnsNotFoundErrorForUnknownRepo(t *testing.T) {
 	if !strings.Contains(err.Error(), "✗") {
 		t.Fatalf("expected dismiss error to include a cross marker, got %v", err)
 	}
-	if !strings.Contains(err.Error(), `repository "dsf" is not part of the current workspace composition`) {
+	if !strings.Contains(err.Error(), `repository or managed worktree "dsf" is not part of the current workspace composition`) {
 		t.Fatalf("unexpected dismiss error: %v", err)
 	}
 }
@@ -1418,5 +1768,34 @@ func TestDismissRemovesOnlyManagedWorkspaceEntries(t *testing.T) {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("expected dismiss to keep manual workspace content %q:\n%s", expected, text)
 		}
+	}
+}
+
+func assertManagedWorktreeControlPath(t *testing.T, primaryPath string, worktreePath string) {
+	t.Helper()
+
+	gitFile, err := os.ReadFile(filepath.Join(worktreePath, ".git"))
+	if err != nil {
+		t.Fatalf("read managed worktree .git file: %v", err)
+	}
+	gitDir, ok := strings.CutPrefix(strings.TrimSpace(string(gitFile)), "gitdir:")
+	if !ok {
+		t.Fatalf("worktree .git file did not contain gitdir pointer: %q", string(gitFile))
+	}
+	gitDir = strings.TrimSpace(gitDir)
+	if !pathHasAnyPrefix(filepath.Clean(gitDir), []string{
+		filepath.Join(primaryPath, ".git", "worktrees"),
+	}) {
+		resolved, err := filepath.EvalSymlinks(primaryPath)
+		if err != nil || !pathHasAnyPrefix(filepath.Clean(gitDir), []string{filepath.Join(resolved, ".git", "worktrees")}) {
+			t.Fatalf("worktree gitdir %s was not under primary git admin path %s", gitDir, primaryPath)
+		}
+	}
+	backref, err := os.ReadFile(filepath.Join(filepath.Clean(gitDir), "gitdir"))
+	if err != nil {
+		t.Fatalf("read managed worktree admin backref: %v", err)
+	}
+	if got, want := filepath.Clean(strings.TrimSpace(string(backref))), filepath.Clean(filepath.Join(worktreePath, ".git")); got != want {
+		t.Fatalf("unexpected worktree admin backref: got %s want %s", got, want)
 	}
 }
