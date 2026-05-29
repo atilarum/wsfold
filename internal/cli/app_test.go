@@ -47,10 +47,10 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(output, "If no repository argument is provided, the command opens an interactive picker with flexible search.") {
 		t.Fatalf("help output did not contain interactive picker note: %q", output)
 	}
-	if !strings.Contains(output, "You can refer to a repository by its local folder name, GitHub owner/name, or owner/name/branch for a local worktree.") {
+	if !strings.Contains(output, "You can refer to a repository by its local folder name or GitHub owner/name. Managed worktrees use owner/name/branch after creation.") {
 		t.Fatalf("help output did not contain repo-ref format note: %q", output)
 	}
-	if !strings.Contains(output, "`wsfold worktree` is trusted-only and creates environment-local worktrees under WSFOLD_TRUSTED_DIR.") {
+	if !strings.Contains(output, "`wsfold worktree` is trusted-only. It summons the primary repository first, then creates a managed worktree in the active workspace.") {
 		t.Fatalf("help output did not contain worktree command note: %q", output)
 	}
 	for _, snippet := range []string{
@@ -81,8 +81,8 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(output, "Examples:") || !strings.Contains(output, `eval "$(wsfold completion zsh)"`) {
 		t.Fatalf("help output did not contain examples section: %q", output)
 	}
-	if !strings.Contains(output, "wsfold summon org_name/billing-service/branch-name") {
-		t.Fatalf("help output did not contain worktree example: %q", output)
+	if strings.Contains(output, "wsfold summon org_name/billing-service/branch-name") {
+		t.Fatalf("help output should not contain summon worktree creation example: %q", output)
 	}
 	if !strings.Contains(output, "wsfold worktree --create-branch org_name/billing-service agent/refactor") {
 		t.Fatalf("help output did not contain worktree create example: %q", output)
@@ -113,8 +113,8 @@ func TestRunHelp(t *testing.T) {
 	commandOrder := []string{
 		"summon            attach a trusted repository to the workspace, local or remote",
 		"summon-external   add an external repository as a workspace root",
-		"dismiss           remove a repository from the current composition",
-		"worktree          create and attach a trusted local Git worktree",
+		"dismiss           remove a repository or clean managed worktree from the composition",
+		"worktree          create a workspace-local managed Git worktree",
 		"init              initialize the current directory as a wsfold workspace",
 		"reindex           refresh the trusted GitHub remote cache",
 		"completion        print shell autocompletion setup",
@@ -231,7 +231,7 @@ func TestRunCompletionZsh(t *testing.T) {
 	if !strings.Contains(stdout.String(), "reindex:refresh the trusted GitHub remote cache") {
 		t.Fatalf("completion output did not contain aligned reindex description: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "worktree:create and attach a trusted local Git worktree") {
+	if !strings.Contains(stdout.String(), "worktree:create a workspace-local managed Git worktree") {
 		t.Fatalf("completion output did not contain worktree description: %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "completion:print shell autocompletion setup") {

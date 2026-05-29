@@ -235,28 +235,28 @@ func TestCompleteDismissUsesBranchRefForWorktreeEntries(t *testing.T) {
 	h.RunGit(base, "remote", "add", "origin", "https://github.com/acme/service.git")
 	h.RunGit(base, "branch", "feature/worktree")
 
-	worktreePath := filepath.Join(h.TrustedRoot, "service-feature")
-	h.RunGit(base, "worktree", "add", worktreePath, "feature/worktree")
-
 	app := NewApp()
 	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
 
-	if err := app.Summon(h.Workspace, "acme/service/feature/worktree"); err != nil {
-		t.Fatalf("Summon worktree returned error: %v", err)
+	if err := app.Worktree(h.Workspace, "acme/service", "feature/worktree", WorktreeOptions{}); err != nil {
+		t.Fatalf("Worktree returned error: %v", err)
 	}
 
 	candidates, err := app.Complete(h.Workspace, "dismiss", "")
 	if err != nil {
 		t.Fatalf("Complete dismiss returned error: %v", err)
 	}
-	if len(candidates) != 1 {
-		t.Fatalf("expected one attached worktree candidate, got %#v", candidates)
+	var worktreeCandidate CompletionCandidate
+	for _, candidate := range candidates {
+		if candidate.Value == "acme/service/feature/worktree" {
+			worktreeCandidate = candidate
+		}
 	}
-	if candidates[0].Value != "acme/service/feature/worktree" {
-		t.Fatalf("expected dismiss candidate to use branch ref, got %#v", candidates[0])
+	if worktreeCandidate.Value == "" {
+		t.Fatalf("expected attached managed worktree candidate, got %#v", candidates)
 	}
-	if !candidates[0].IsWorktree || candidates[0].Branch != "feature/worktree" {
-		t.Fatalf("expected dismiss candidate to expose worktree metadata, got %#v", candidates[0])
+	if !worktreeCandidate.IsWorktree || worktreeCandidate.Branch != "feature/worktree" {
+		t.Fatalf("expected dismiss candidate to expose worktree metadata, got %#v", worktreeCandidate)
 	}
 }
 

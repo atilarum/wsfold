@@ -152,6 +152,74 @@ func createGitWorktree(runner Runner, repoPath string, targetPath string, branch
 	return nil
 }
 
+func chooseManagedWorktreePath(primaryRoot string, primaryMountPath string, branch string, explicitName string, manifest Manifest) (string, error) {
+	folderName := strings.TrimSpace(explicitName)
+	if folderName != "" {
+		if filepath.Base(folderName) != folderName || folderName == "." || folderName == ".." {
+			return "", fmt.Errorf("worktree name %q must be a single folder name", explicitName)
+		}
+		targetPath := filepath.Join(primaryRoot, folderName)
+		if err := ensureManagedWorktreeDestinationAvailable(targetPath, manifest); err != nil {
+			return "", err
+		}
+		return targetPath, nil
+	}
+
+	base := defaultWorktreeFolderName(filepath.Base(primaryMountPath), branch)
+	for i := 0; ; i++ {
+		name := base
+		if i > 0 {
+			name = fmt.Sprintf("%s-%d", base, i+1)
+		}
+		targetPath := filepath.Join(primaryRoot, name)
+		err := ensureManagedWorktreeDestinationAvailable(targetPath, manifest)
+		if err == nil {
+			return targetPath, nil
+		}
+		if !isWorktreeDestinationCollision(err) {
+			return "", err
+		}
+	}
+}
+
+type worktreeDestinationCollisionError struct {
+	path string
+}
+
+func (e worktreeDestinationCollisionError) Error() string {
+	return fmt.Sprintf("worktree destination %s already exists or is managed", e.path)
+}
+
+func isWorktreeDestinationCollision(err error) bool {
+	_, ok := err.(worktreeDestinationCollisionError)
+	return ok
+}
+
+func ensureManagedWorktreeDestinationAvailable(targetPath string, manifest Manifest) error {
+	cleanTarget := filepath.Clean(targetPath)
+	for _, entry := range manifest.Trusted {
+		if filepath.Clean(entry.MountPath) == cleanTarget {
+			return worktreeDestinationCollisionError{path: cleanTarget}
+		}
+	}
+	for _, entry := range manifest.External {
+		if filepath.Clean(entry.CheckoutPath) == cleanTarget {
+			return worktreeDestinationCollisionError{path: cleanTarget}
+		}
+	}
+	for _, entry := range manifest.ManagedWorktrees {
+		if filepath.Clean(entry.WorkspacePath) == cleanTarget {
+			return worktreeDestinationCollisionError{path: cleanTarget}
+		}
+	}
+	if _, err := os.Stat(cleanTarget); err == nil {
+		return worktreeDestinationCollisionError{path: cleanTarget}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat worktree destination %s: %w", cleanTarget, err)
+	}
+	return nil
+}
+
 func defaultWorktreeFolderName(base string, branch string) string {
 	base = strings.ToLower(strings.TrimSpace(base))
 	if base == "" {

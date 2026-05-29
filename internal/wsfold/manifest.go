@@ -13,16 +13,18 @@ import (
 const manifestVersion = 1
 
 type Manifest struct {
-	Version     int     `yaml:"version"`
-	PrimaryRoot string  `yaml:"primary_root"`
-	Trusted     []Entry `yaml:"trusted"`
-	External    []Entry `yaml:"external"`
+	Version          int                    `yaml:"version"`
+	PrimaryRoot      string                 `yaml:"primary_root"`
+	Trusted          []Entry                `yaml:"trusted"`
+	External         []Entry                `yaml:"external"`
+	ManagedWorktrees []ManagedWorktreeEntry `yaml:"managed_worktrees,omitempty"`
 }
 
 func cloneManifest(in Manifest) Manifest {
 	out := in
 	out.Trusted = append([]Entry(nil), in.Trusted...)
 	out.External = append([]Entry(nil), in.External...)
+	out.ManagedWorktrees = append([]ManagedWorktreeEntry(nil), in.ManagedWorktrees...)
 	return out
 }
 
@@ -36,10 +38,11 @@ func loadManifest(primaryRoot string) (Manifest, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			return Manifest{
-				Version:     manifestVersion,
-				PrimaryRoot: primaryRoot,
-				Trusted:     []Entry{},
-				External:    []Entry{},
+				Version:          manifestVersion,
+				PrimaryRoot:      primaryRoot,
+				Trusted:          []Entry{},
+				External:         []Entry{},
+				ManagedWorktrees: []ManagedWorktreeEntry{},
 			}, nil
 		}
 		return Manifest{}, fmt.Errorf("read manifest: %w", err)
@@ -61,6 +64,7 @@ func loadManifest(primaryRoot string) (Manifest, error) {
 	}
 	sortEntries(manifest.Trusted)
 	sortEntries(manifest.External)
+	sortManagedWorktrees(manifest.ManagedWorktrees)
 	return manifest, nil
 }
 
@@ -72,6 +76,7 @@ func saveManifest(primaryRoot string, manifest Manifest) error {
 	}
 	sortEntries(manifest.Trusted)
 	sortEntries(manifest.External)
+	sortManagedWorktrees(manifest.ManagedWorktrees)
 
 	if err := os.MkdirAll(filepath.Dir(manifestPath(primaryRoot)), 0o755); err != nil {
 		return fmt.Errorf("create manifest directory: %w", err)
@@ -107,6 +112,69 @@ func normalizeManifest(manifest *Manifest) error {
 	}
 	for i := range manifest.External {
 		manifest.External[i].Backend = ""
+	}
+	seenWorktreePaths := map[string]ManagedWorktreeEntry{}
+	seenPrimaryBranch := map[string]ManagedWorktreeEntry{}
+	for i := range manifest.ManagedWorktrees {
+		entry := &manifest.ManagedWorktrees[i]
+		if entry.ControlMode == "" {
+			entry.ControlMode = WorktreeControlWorkspaceMountedPrimary
+		}
+		if entry.ControlMode != WorktreeControlWorkspaceMountedPrimary {
+			return fmt.Errorf("unsupported managed worktree control_mode %q for %s", entry.ControlMode, entry.RepoRef)
+		}
+		if entry.Owner == "" {
+			entry.Owner = ManagedWorktreeOwnerWSFold
+		}
+		if entry.Owner != ManagedWorktreeOwnerWSFold {
+			return fmt.Errorf("unsupported managed worktree owner %q for %s", entry.Owner, entry.RepoRef)
+		}
+		if strings.TrimSpace(entry.WorkspacePath) == "" {
+			return fmt.Errorf("managed worktree %q has empty workspace_path", entry.RepoRef)
+		}
+		entry.WorkspacePath = filepath.Clean(entry.WorkspacePath)
+		if err := requirePathInside(manifest.PrimaryRoot, entry.WorkspacePath, "managed worktree "+entry.RepoRef); err != nil {
+			return err
+		}
+		if strings.TrimSpace(entry.Branch) == "" && !entry.UnsupportedLegacy {
+			return fmt.Errorf("managed worktree %q has empty branch", entry.RepoRef)
+		}
+		if strings.TrimSpace(entry.PrimaryRepoRef) == "" {
+			return fmt.Errorf("managed worktree %q has empty primary_repo_ref", entry.RepoRef)
+		}
+		if strings.TrimSpace(entry.PrimaryMountPath) == "" {
+			return fmt.Errorf("managed worktree %q has empty primary_mount_path", entry.RepoRef)
+		}
+		entry.PrimaryMountPath = filepath.Clean(entry.PrimaryMountPath)
+		if strings.TrimSpace(entry.PrimaryCheckoutPath) != "" {
+			entry.PrimaryCheckoutPath = filepath.Clean(entry.PrimaryCheckoutPath)
+		}
+		cleanWorktreePath := filepath.Clean(entry.WorkspacePath)
+		if previous, ok := seenWorktreePaths[cleanWorktreePath]; ok {
+			return fmt.Errorf("duplicate managed worktree workspace_path %s claimed by %s and %s", cleanWorktreePath, previous.RepoRef, entry.RepoRef)
+		}
+		if previous, ok := seenMountPaths[cleanWorktreePath]; ok {
+			return fmt.Errorf("managed worktree workspace_path %s collides with trusted mount_path for %s", cleanWorktreePath, previous.RepoRef)
+		}
+		seenWorktreePaths[cleanWorktreePath] = *entry
+		if strings.TrimSpace(entry.Branch) != "" {
+			primaryBranchKey := filepath.Clean(entry.PrimaryMountPath) + "\x00" + strings.TrimSpace(entry.Branch)
+			if previous, ok := seenPrimaryBranch[primaryBranchKey]; ok {
+				return fmt.Errorf("duplicate managed worktree branch %q for primary %s claimed by %s and %s", entry.Branch, entry.PrimaryRepoRef, previous.RepoRef, entry.RepoRef)
+			}
+			seenPrimaryBranch[primaryBranchKey] = *entry
+		}
+	}
+	return nil
+}
+
+func requirePathInside(root string, path string, label string) error {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	if err != nil {
+		return fmt.Errorf("validate %s path %s: %w", label, path, err)
+	}
+	if rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." || filepath.IsAbs(rel) {
+		return fmt.Errorf("%s path %s must be inside workspace root %s", label, path, root)
 	}
 	return nil
 }
@@ -148,12 +216,51 @@ func (m *Manifest) Remove(entry Entry) {
 	m.External = removeEntry(m.External, entry)
 }
 
+func (m *Manifest) UpsertManagedWorktree(entry ManagedWorktreeEntry) {
+	replaced := false
+	for i := range m.ManagedWorktrees {
+		if filepath.Clean(m.ManagedWorktrees[i].WorkspacePath) == filepath.Clean(entry.WorkspacePath) {
+			m.ManagedWorktrees[i] = entry
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		m.ManagedWorktrees = append(m.ManagedWorktrees, entry)
+	}
+	sortManagedWorktrees(m.ManagedWorktrees)
+}
+
+func (m *Manifest) RemoveManagedWorktree(entry ManagedWorktreeEntry) {
+	filtered := m.ManagedWorktrees[:0]
+	target := filepath.Clean(entry.WorkspacePath)
+	for _, candidate := range m.ManagedWorktrees {
+		if filepath.Clean(candidate.WorkspacePath) == target {
+			continue
+		}
+		filtered = append(filtered, candidate)
+	}
+	m.ManagedWorktrees = filtered
+}
+
 func sortEntries(entries []Entry) {
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].RepoRef != entries[j].RepoRef {
 			return entries[i].RepoRef < entries[j].RepoRef
 		}
 		return entries[i].CheckoutPath < entries[j].CheckoutPath
+	})
+}
+
+func sortManagedWorktrees(entries []ManagedWorktreeEntry) {
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].PrimaryRepoRef != entries[j].PrimaryRepoRef {
+			return entries[i].PrimaryRepoRef < entries[j].PrimaryRepoRef
+		}
+		if entries[i].Branch != entries[j].Branch {
+			return entries[i].Branch < entries[j].Branch
+		}
+		return entries[i].WorkspacePath < entries[j].WorkspacePath
 	})
 }
 
@@ -209,6 +316,33 @@ func resolveManifestEntry(manifest Manifest, ref string, runner Runner) (Entry, 
 	}
 
 	return Entry{}, false, nil
+}
+
+func resolveManagedWorktreeEntry(manifest Manifest, ref string) (ManagedWorktreeEntry, bool, error) {
+	ref = normalizeRepoRef(ref)
+	var exact []ManagedWorktreeEntry
+	var local []ManagedWorktreeEntry
+	for _, entry := range manifest.ManagedWorktrees {
+		if normalizeRepoRef(entry.RepoRef) == ref {
+			exact = append(exact, entry)
+		}
+		if strings.EqualFold(completionFolderName(entry.WorkspacePath), ref) {
+			local = append(local, entry)
+		}
+	}
+	if len(exact) == 1 {
+		return exact[0], true, nil
+	}
+	if len(exact) > 1 {
+		return ManagedWorktreeEntry{}, false, fmt.Errorf("managed worktree ref %q is ambiguous", ref)
+	}
+	if len(local) == 1 {
+		return local[0], true, nil
+	}
+	if len(local) > 1 {
+		return ManagedWorktreeEntry{}, false, fmt.Errorf("managed worktree folder %q is ambiguous", ref)
+	}
+	return ManagedWorktreeEntry{}, false, nil
 }
 
 func hydrateManifestRepo(entry Entry, runner Runner) Repo {

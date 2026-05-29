@@ -116,6 +116,19 @@ func workspaceFolders(manifest Manifest) ([]workspaceFolder, error) {
 			Path: relativePath,
 		})
 	}
+	for _, entry := range manifest.ManagedWorktrees {
+		if entry.UnsupportedLegacy {
+			continue
+		}
+		relativePath, err := workspaceRelativePath(manifest.PrimaryRoot, entry.WorkspacePath)
+		if err != nil {
+			return nil, err
+		}
+		folders = append(folders, workspaceFolder{
+			Name: filepath.Base(entry.WorkspacePath),
+			Path: relativePath,
+		})
+	}
 
 	return folders, nil
 }

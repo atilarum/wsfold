@@ -90,6 +90,87 @@ func TestRenderWorkspaceCustomProjectsDirDoesNotCreateExcludes(t *testing.T) {
 	}
 }
 
+func TestRenderWorkspaceIncludesManagedWorktrees(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	manifest := Manifest{
+		Version:     manifestVersion,
+		PrimaryRoot: root,
+		Trusted: []Entry{
+			{
+				RepoRef:      "acme/service",
+				CheckoutPath: "/trusted/acme/service",
+				TrustClass:   TrustClassTrusted,
+				MountPath:    filepath.Join(root, "service"),
+			},
+		},
+		ManagedWorktrees: []ManagedWorktreeEntry{
+			{
+				RepoRef:             "acme/service/feature/task",
+				Branch:              "feature/task",
+				WorkspacePath:       filepath.Join(root, "service-feature-task"),
+				PrimaryRepoRef:      "acme/service",
+				PrimaryCheckoutPath: "/trusted/acme/service",
+				PrimaryMountPath:    filepath.Join(root, "service"),
+				ControlMode:         WorktreeControlWorkspaceMountedPrimary,
+				Owner:               ManagedWorktreeOwnerWSFold,
+				CreationSource:      "wsfold worktree",
+			},
+		},
+	}
+
+	data, err := renderWorkspace(root, Manifest{}, manifest, ".")
+	if err != nil {
+		t.Fatalf("renderWorkspace returned error: %v", err)
+	}
+	text := string(data)
+	for _, expected := range []string{`"path": "service"`, `"name": "service-feature-task"`, `"path": "service-feature-task"`} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("expected managed worktree workspace folder %q:\n%s", expected, text)
+		}
+	}
+}
+
+func TestDefaultWorktreeFolderNameAndCollisionHandling(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	manifest := Manifest{
+		Version:     manifestVersion,
+		PrimaryRoot: root,
+		ManagedWorktrees: []ManagedWorktreeEntry{
+			{
+				RepoRef:             "acme/service/feature/sandbox-path",
+				Branch:              "feature/sandbox-path",
+				WorkspacePath:       filepath.Join(root, "service-feature-sandbox-path"),
+				PrimaryRepoRef:      "acme/service",
+				PrimaryCheckoutPath: "/trusted/acme/service",
+				PrimaryMountPath:    filepath.Join(root, "service"),
+				ControlMode:         WorktreeControlWorkspaceMountedPrimary,
+				Owner:               ManagedWorktreeOwnerWSFold,
+				CreationSource:      "wsfold worktree",
+			},
+		},
+	}
+
+	got, err := chooseManagedWorktreePath(root, filepath.Join(root, "service"), "feature/sandbox-path", "", manifest)
+	if err != nil {
+		t.Fatalf("chooseManagedWorktreePath returned error: %v", err)
+	}
+	if want := filepath.Join(root, "service-feature-sandbox-path-2"); got != want {
+		t.Fatalf("unexpected collision path: got %s want %s", got, want)
+	}
+
+	got, err = chooseManagedWorktreePath(root, filepath.Join(root, "service"), "feature/sandbox-path", "custom-task", manifest)
+	if err != nil {
+		t.Fatalf("chooseManagedWorktreePath with explicit name returned error: %v", err)
+	}
+	if want := filepath.Join(root, "custom-task"); got != want {
+		t.Fatalf("unexpected explicit path: got %s want %s", got, want)
+	}
+}
+
 func TestRenderWorkspaceUsesTrustedMountPathForEveryBackend(t *testing.T) {
 	t.Parallel()
 

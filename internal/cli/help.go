@@ -33,12 +33,12 @@ var commandHelpEntries = []commandHelpEntry{
 	{
 		Name:        "dismiss",
 		Usage:       "wsfold dismiss [repo-ref]",
-		Description: "remove a repository from the current composition",
+		Description: "remove a repository or clean managed worktree from the composition",
 	},
 	{
 		Name:        "worktree",
 		Usage:       "wsfold worktree [repo-ref] [branch]",
-		Description: "create and attach a trusted local Git worktree",
+		Description: "create a workspace-local managed Git worktree",
 	},
 	{
 		Name:        "init",
@@ -111,8 +111,8 @@ func helpText() string {
 	}
 	b.WriteString("  wsfold --version\n\n")
 	b.WriteString("If no repository argument is provided, the command opens an interactive picker with flexible search.\n\n")
-	b.WriteString("You can refer to a repository by its local folder name, GitHub owner/name, or owner/name/branch for a local worktree.\n\n")
-	b.WriteString("`wsfold worktree` is trusted-only and creates environment-local worktrees under WSFOLD_TRUSTED_DIR.\n\n")
+	b.WriteString("You can refer to a repository by its local folder name or GitHub owner/name. Managed worktrees use owner/name/branch after creation.\n\n")
+	b.WriteString("`wsfold worktree` is trusted-only. It summons the primary repository first, then creates a managed worktree in the active workspace. Use --name to override the folder name and --create-branch to create a new branch.\n\n")
 	b.WriteString("Trusted attachments use the symlink backend by default. On Linux hosts with FUSE3, bindfs,\n")
 	b.WriteString("fusermount3, and a usable /dev/fuse, set WSFOLD_MOUNT_BACKEND=linux-fuse-bind to run\n")
 	b.WriteString("bindfs --no-allow-other and detach with fusermount3 -u. Linux devcontainers may instead use\n")
@@ -148,7 +148,6 @@ func helpText() string {
 	b.WriteString("  wsfold summon\n")
 	b.WriteString("  wsfold summon billing-service\n")
 	b.WriteString("  wsfold summon org_name/billing-service\n")
-	b.WriteString("  wsfold summon org_name/billing-service/branch-name\n")
 	b.WriteString("  wsfold summon-external legacy-tool\n")
 	b.WriteString("  wsfold worktree\n")
 	b.WriteString("  wsfold worktree org_name/billing-service release/2026-q1\n")

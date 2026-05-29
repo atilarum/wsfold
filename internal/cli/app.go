@@ -86,12 +86,7 @@ func Run(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
-		for _, ref := range refs {
-			if err := app.Dismiss(cwd, ref); err != nil {
-				return err
-			}
-		}
-		return nil
+		return app.DismissMany(cwd, refs)
 	case "worktree":
 		opts, repoRef, branch, err := parseWorktreeArgs(args, stderr)
 		if err != nil {
