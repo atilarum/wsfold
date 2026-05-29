@@ -14,6 +14,7 @@ type CompletionCandidate struct {
 	Description string
 	Attached    bool
 	Disabled    bool
+	Realization RealizationStatus
 	TrustClass  TrustClass
 	Name        string
 	Slug        string
@@ -59,8 +60,11 @@ func (a *App) TrustedSummonPickerState(cwd string) (TrustedSummonPickerState, er
 		return TrustedSummonPickerState{}, err
 	}
 
+	declaredCandidates := declaredTrustedCompletionCandidates(cwd, "")
+	candidates := mergeTrustedSummonCandidates(append(localCandidates, declaredCandidates...), trustedRemoteCompletionCandidates(remoteState.Repos))
+	candidates = append(candidates, managedWorktreeCompletionCandidates(cwd, true, "")...)
 	return TrustedSummonPickerState{
-		Candidates: append(mergeTrustedSummonCandidates(localCandidates, trustedRemoteCompletionCandidates(remoteState.Repos)), managedWorktreeCompletionCandidates(cwd, true, "")...),
+		Candidates: candidates,
 		Refreshing: remoteState.NeedsRefresh && remoteState.GitHubReady,
 		Status:     remoteState.StatusMessage,
 	}, nil
@@ -149,10 +153,13 @@ func (a *App) completeRepoIndex(cwd string, prefix string, requested TrustClass)
 
 	attached := attachedCheckoutPaths(cwd)
 	candidates := completionCandidatesFromRepos(repos, attached, prefix)
+	enrichCandidateRealizations(cwd, candidates)
 	if requested == TrustClassTrusted {
+		candidates = append(candidates, declaredTrustedCompletionCandidates(cwd, prefix)...)
 		candidates = append(candidates, managedWorktreeCompletionCandidates(cwd, true, prefix)...)
 	}
 
+	candidates = dedupeCandidatesByKey(candidates)
 	sortCandidates(candidates)
 	return candidates, nil
 }
@@ -184,7 +191,9 @@ func trustedLocalCompletionCandidates(cwd string, root string, runner Runner) ([
 		return nil, err
 	}
 	repos = filterPrimaryRepos(repos)
-	return completionCandidatesFromRepos(repos, attachedCheckoutPaths(cwd), ""), nil
+	candidates := completionCandidatesFromRepos(repos, attachedCheckoutPaths(cwd), "")
+	enrichCandidateRealizations(cwd, candidates)
+	return candidates, nil
 }
 
 func discoverCompletionRepos(root string, trustClass TrustClass, runner Runner) ([]Repo, error) {
@@ -258,6 +267,7 @@ func (a *App) completeManifest(cwd string, prefix string) ([]CompletionCandidate
 			Value:       value,
 			Description: description,
 			Attached:    true,
+			Realization: RealizationAttached,
 			TrustClass:  entry.TrustClass,
 			Name:        completionFolderName(entry.CheckoutPath),
 			Slug:        repo.Slug,
@@ -279,6 +289,7 @@ func (a *App) completeManifest(cwd string, prefix string) ([]CompletionCandidate
 			Value:       value,
 			Description: completionDescription(entry.PrimaryRepoRef, entry.WorkspacePath),
 			Attached:    true,
+			Realization: RealizationAttached,
 			TrustClass:  TrustClassTrusted,
 			Name:        completionFolderName(entry.WorkspacePath),
 			Slug:        slugFromRepoRef(entry.PrimaryRepoRef),
@@ -320,12 +331,21 @@ func managedWorktreeCompletionCandidates(cwd string, disabled bool, prefix strin
 		if prefix != "" && !strings.HasPrefix(strings.ToLower(entry.RepoRef), strings.ToLower(prefix)) {
 			continue
 		}
+		realization := InspectManagedWorktreeRealization(manifest, entry, Runner{})
+		entryDisabled := disabled
+		if realization.Status == RealizationUnmounted {
+			entryDisabled = false
+		}
+		if realization.Status == RealizationInvalid {
+			entryDisabled = true
+		}
 		candidates = append(candidates, CompletionCandidate{
 			Key:         entry.Key(),
 			Value:       entry.RepoRef,
 			Description: completionDescription(entry.PrimaryRepoRef, entry.WorkspacePath),
 			Attached:    true,
-			Disabled:    disabled,
+			Disabled:    entryDisabled,
+			Realization: realization.Status,
 			TrustClass:  TrustClassTrusted,
 			Name:        completionFolderName(entry.WorkspacePath),
 			Slug:        slugFromRepoRef(entry.PrimaryRepoRef),
@@ -335,6 +355,99 @@ func managedWorktreeCompletionCandidates(cwd string, disabled bool, prefix strin
 		})
 	}
 	return candidates
+}
+
+func declaredTrustedCompletionCandidates(cwd string, prefix string) []CompletionCandidate {
+	primaryRoot, err := resolveWorkspaceRoot(cwd)
+	if err != nil {
+		return nil
+	}
+	manifest, err := loadManifest(primaryRoot)
+	if err != nil {
+		return nil
+	}
+	candidates := make([]CompletionCandidate, 0, len(manifest.Trusted))
+	for _, entry := range manifest.Trusted {
+		if isGitRepo(entry.CheckoutPath) {
+			continue
+		}
+		repo := hydrateManifestRepo(entry, Runner{})
+		value := completionFolderName(entry.CheckoutPath)
+		if strings.TrimSpace(repo.Slug) != "" {
+			value = repo.DisplayRef()
+		} else if strings.TrimSpace(entry.RepoRef) != "" {
+			value = entry.RepoRef
+		}
+		if prefix != "" && !strings.HasPrefix(strings.ToLower(value), strings.ToLower(prefix)) {
+			continue
+		}
+		realization := InspectAttachmentRealization(entry)
+		candidates = append(candidates, CompletionCandidate{
+			Key:         entry.Key(),
+			Value:       value,
+			Description: completionDescription(entry.RepoRef, entry.CheckoutPath),
+			Attached:    true,
+			Disabled:    realization.Status == RealizationInvalid,
+			Realization: realization.Status,
+			TrustClass:  TrustClassTrusted,
+			Name:        completionFolderName(entry.MountPath),
+			Slug:        repo.Slug,
+			Branch:      repo.Branch,
+			IsWorktree:  false,
+			Source:      CompletionSourceLocal,
+		})
+	}
+	return candidates
+}
+
+func enrichCandidateRealizations(cwd string, candidates []CompletionCandidate) {
+	statusByPath := realizationStatusByCheckoutPath(cwd)
+	for i := range candidates {
+		if status := statusByPath[candidates[i].Key]; status != "" {
+			candidates[i].Realization = status
+			candidates[i].Attached = true
+			if status == RealizationInvalid {
+				candidates[i].Disabled = true
+			}
+		}
+	}
+}
+
+func realizationStatusByCheckoutPath(cwd string) map[string]RealizationStatus {
+	statuses := map[string]RealizationStatus{}
+	primaryRoot, err := resolveWorkspaceRoot(cwd)
+	if err != nil {
+		return statuses
+	}
+	manifest, err := loadManifest(primaryRoot)
+	if err != nil {
+		return statuses
+	}
+	for _, entry := range manifest.Trusted {
+		statuses[repoCompletionKey(Repo{CheckoutPath: entry.CheckoutPath, TrustClass: TrustClassTrusted})] = InspectAttachmentRealization(entry).Status
+	}
+	return statuses
+}
+
+func dedupeCandidatesByKey(candidates []CompletionCandidate) []CompletionCandidate {
+	deduped := candidates[:0]
+	seen := map[string]struct{}{}
+	for _, candidate := range candidates {
+		key := candidateKeyForDedupe(candidate)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		deduped = append(deduped, candidate)
+	}
+	return deduped
+}
+
+func candidateKeyForDedupe(candidate CompletionCandidate) string {
+	if candidate.Key != "" {
+		return candidate.Key
+	}
+	return candidate.Value
 }
 
 func slugFromRepoRef(ref string) string {
@@ -374,6 +487,7 @@ func completionCandidatesFromRepos(repos []Repo, attached map[string]bool, prefi
 			Value:       value,
 			Description: description,
 			Attached:    attached[repo.CheckoutPath],
+			Realization: realizationFromAttached(attached[repo.CheckoutPath]),
 			TrustClass:  repo.TrustClass,
 			Name:        completionFolderName(repo.CheckoutPath),
 			Slug:        repo.Slug,
@@ -383,6 +497,13 @@ func completionCandidatesFromRepos(repos []Repo, attached map[string]bool, prefi
 		})
 	}
 	return candidates
+}
+
+func realizationFromAttached(attached bool) RealizationStatus {
+	if attached {
+		return RealizationAttached
+	}
+	return ""
 }
 
 func trustedRemoteCompletionCandidates(repos []TrustedRemoteRepo) []CompletionCandidate {

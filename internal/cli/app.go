@@ -70,6 +70,11 @@ func Run(args []string, stdout, stderr io.Writer) error {
 			}
 		}
 		return nil
+	case "summon-all":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: wsfold summon-all")
+		}
+		return app.SummonAll(cwd)
 	case "summon-external":
 		refs, err := resolveCommandRefs(app, cwd, "summon-external", args, stdout, stderr)
 		if err != nil {
@@ -168,6 +173,15 @@ func runWorktreeCommand(app *wsfold.App, cwd string, repoRef string, branch stri
 			return nil
 		}
 		repoRef = refs[0]
+	}
+
+	if recoverable, err := app.IsManagedWorktreeRecoveryTarget(cwd, repoRef); err != nil {
+		return err
+	} else if recoverable {
+		if strings.TrimSpace(branch) != "" {
+			return fmt.Errorf("managed worktree recovery target %q does not accept a branch argument", repoRef)
+		}
+		return app.RecoverManagedWorktree(cwd, repoRef)
 	}
 
 	if strings.TrimSpace(branch) == "" {

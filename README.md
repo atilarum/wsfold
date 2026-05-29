@@ -101,6 +101,9 @@ wsfold summon service-name
 # Attach a trusted repository by GitHub owner/repo name, cloning on demand if trusted.
 wsfold summon org_name/service-name
 
+# Restore every declared trusted attachment and managed worktree after a restart.
+wsfold summon-all
+
 # Create a workspace-local managed worktree on an existing branch.
 wsfold worktree org_name/service-name release/2026-q1
 
@@ -122,7 +125,10 @@ Commands:
   Initialize the current directory as a workspace root. After that, commands can be run from any subdirectory inside the workspace tree. It creates `./.wsfold/manifest.yaml` and a matching `<workspace-dirname>.code-workspace` file.
 
 - `wsfold summon [repo-ref]`
-  Attach a trusted repository to the current workspace. Works with trusted repositories already present under `WSFOLD_TRUSTED_DIR` and with trusted remote repositories from `WSFOLD_TRUSTED_GITHUB_ORGS`, which can be cloned on demand. Without `repo-ref`, opens an interactive picker.
+  Ensure one trusted repository or WSFold-managed worktree is available in the current workspace. If `repo-ref` is already declared in the manifest, `summon` checks the recorded desired state first: healthy entries are no-ops, `unmounted` entries are recovered with the backend recorded in the manifest, and `invalid` entries are refused without deleting or overwriting local files. If `repo-ref` is not declared yet, the command attaches a trusted repository from `WSFOLD_TRUSTED_DIR` or trusted remote discovery. Without `repo-ref`, opens an interactive picker.
+
+- `wsfold summon-all`
+  Reconcile the whole declared trusted workspace graph. This is the normal recovery command after a devcontainer restart, reboot, mount namespace reset, disappeared bind mount, or stopped FUSE daemon. Repository attachments are reconciled before dependent managed worktrees. WSFold keeps processing independent recoverable entries after an invalid entry, but exits non-zero if any entry remains invalid or failed.
 
 - `wsfold summon-external [repo-ref]`
   Add an external repository as a workspace root. Only works with repositories already present under `WSFOLD_EXTERNAL_DIR`. Without `repo-ref`, opens an interactive picker.
@@ -143,7 +149,9 @@ Commands:
 
 `owner/name` always refers to the primary checkout for that repository. New task worktrees are created with `wsfold worktree`, not by attaching arbitrary existing Git worktree directories with `wsfold summon`. `summon` offers trusted primary repositories and trusted remote repositories; unmanaged worktrees under `WSFOLD_TRUSTED_DIR` are not new attachment candidates. Attached repositories and managed worktrees appear in the generated `.code-workspace` file under their workspace folder names, so a primary checkout and one or more task worktrees can coexist in the same workspace.
 
-`wsfold worktree` is intentionally workspace-local. The created worktree depends on the primary repository attachment that is visible in the active workspace because its Git control path is tied to that primary checkout. External worktree inventory, adoption, and cleanup are outside this command's scope.
+The interactive picker uses three recovery states for declared trusted entries. `attached` means the entry is healthy and not selectable for `summon`; `unmounted` means manifest intent exists and WSFold can restore the runtime realization by repeating `summon`; `invalid` means the current filesystem or Git shape is ambiguous or unsafe for automatic repair. Examples of invalid state include a missing source checkout, unmanaged files at the target path, or broken worktree control metadata that WSFold cannot prove safe to repair.
+
+`wsfold worktree` is intentionally workspace-local. The created worktree depends on the primary repository attachment that is visible in the active workspace because its Git control path is tied to that primary checkout. If the worktree picker shows an existing managed worktree as `unmounted`, selecting it repairs that worktree instead of creating a nested worktree. External worktree inventory, adoption, and cleanup are outside this command's scope.
 
 ## Visual Studio Code, Cursor, and Windsurf Integration
 
@@ -154,6 +162,8 @@ Trusted repositories attached with `wsfold summon` are symlinked into the worksp
 Linux hosts can opt into FUSE-backed bind mounts instead of symlinks by setting `WSFOLD_MOUNT_BACKEND=linux-fuse-bind`. This backend runs `bindfs --no-allow-other <checkout_path> <mount_path>`, writes the managed `mount_path` to the generated workspace file, and dismisses with `fusermount3 -u <mount_path>`. It does not use `sudo mount --bind`, and ordinary host usage does not require `CAP_SYS_ADMIN`. See [docs/linux-fuse-bind.md](docs/linux-fuse-bind.md) for setup, validation, security notes, troubleshooting, and manual backout guidance.
 
 Linux devcontainers can opt into native bind mounts instead of symlinks by setting `WSFOLD_MOUNT_BACKEND=linux-native-bind` and starting the container with `CAP_SYS_ADMIN`, for example Docker `--cap-add=SYS_ADMIN` or Compose `cap_add: [SYS_ADMIN]`. This backend uses the kernel mount path through `sudo mount --bind` and `sudo umount`; it does not require `/dev/fuse`, `bindfs`, or `fuse3`, and the documentation intentionally does not recommend `--privileged`. See [docs/devcontainer-native-bind.md](docs/devcontainer-native-bind.md) for setup, security notes, troubleshooting, and manual backout guidance.
+
+If a bind or FUSE mount disappears but the manifest still declares it, run `wsfold summon-all` from the workspace. To recover one item, run `wsfold summon <repo-ref>`. WSFold restores missing symlinks, absent bind/FUSE mounts with empty managed mount residue, and managed worktrees whose primary attachment can be restored. It refuses to overwrite non-empty target paths or user-owned worktrees; inspect those paths manually, move any user data aside if appropriate, and retry.
 
 External repositories attached with `wsfold summon-external` are handled differently. They are added to the `.code-workspace` file as workspace roots, but are not symlinked into the trusted workspace tree.
 

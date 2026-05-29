@@ -1,0 +1,74 @@
+package wsfold
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/atilarum/wsfold/internal/testutil"
+)
+
+func TestInspectAttachmentRealizationSymlinkStates(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	entry := Entry{
+		RepoRef:      "acme/service",
+		CheckoutPath: repoPath,
+		TrustClass:   TrustClassTrusted,
+		Backend:      AttachmentBackendSymlink,
+		MountPath:    filepath.Join(h.Workspace, "service"),
+	}
+
+	if got := InspectAttachmentRealization(entry); got.Status != RealizationUnmounted {
+		t.Fatalf("missing symlink should be unmounted, got %#v", got)
+	}
+	if err := os.Symlink(repoPath, entry.MountPath); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+	if got := InspectAttachmentRealization(entry); got.Status != RealizationAttached {
+		t.Fatalf("healthy symlink should be attached, got %#v", got)
+	}
+	if err := os.Remove(entry.MountPath); err != nil {
+		t.Fatalf("remove symlink: %v", err)
+	}
+	wrongPath := filepath.Join(h.TrustedRoot, "wrong")
+	h.InitRepo(wrongPath)
+	if err := os.Symlink(wrongPath, entry.MountPath); err != nil {
+		t.Fatalf("create wrong symlink: %v", err)
+	}
+	if got := InspectAttachmentRealization(entry); got.Status != RealizationUnmounted {
+		t.Fatalf("wrong symlink target should be unmounted, got %#v", got)
+	}
+}
+
+func TestInspectAttachmentRealizationInvalidStates(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+
+	entry := Entry{
+		RepoRef:      "acme/service",
+		CheckoutPath: filepath.Join(h.TrustedRoot, "missing"),
+		TrustClass:   TrustClassTrusted,
+		Backend:      AttachmentBackendSymlink,
+		MountPath:    filepath.Join(h.Workspace, "service"),
+	}
+	if got := InspectAttachmentRealization(entry); got.Status != RealizationInvalid {
+		t.Fatalf("missing source should be invalid, got %#v", got)
+	}
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	entry.CheckoutPath = repoPath
+	if err := os.Mkdir(entry.MountPath, 0o755); err != nil {
+		t.Fatalf("mkdir occupied mount path: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(entry.MountPath, "user.txt"), []byte("user\n"), 0o644); err != nil {
+		t.Fatalf("write occupied mount path: %v", err)
+	}
+	if got := InspectAttachmentRealization(entry); got.Status != RealizationInvalid {
+		t.Fatalf("occupied mount path should be invalid, got %#v", got)
+	}
+}
