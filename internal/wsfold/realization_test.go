@@ -72,3 +72,38 @@ func TestInspectAttachmentRealizationInvalidStates(t *testing.T) {
 		t.Fatalf("occupied mount path should be invalid, got %#v", got)
 	}
 }
+
+func TestInspectAttachmentRealizationNativeBindAcceptsSameGitMetadata(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	mountPath := filepath.Join(h.Workspace, "service")
+	if err := os.Symlink(repoPath, mountPath); err != nil {
+		t.Fatalf("create mounted path fixture: %v", err)
+	}
+
+	oldMountInfo := activeMountInfoFunc
+	activeMountInfoFunc = func() (map[string]mountPointInfo, error) {
+		return map[string]mountPointInfo{
+			filepath.Clean(mountPath): {
+				Path:   mountPath,
+				Source: "mount0[/_prj/service]",
+				FSType: "virtiofs",
+			},
+		}, nil
+	}
+	t.Cleanup(func() { activeMountInfoFunc = oldMountInfo })
+
+	entry := Entry{
+		RepoRef:      "acme/service",
+		CheckoutPath: repoPath,
+		TrustClass:   TrustClassTrusted,
+		Backend:      AttachmentBackendLinuxNativeBind,
+		MountPath:    mountPath,
+	}
+	if got := InspectAttachmentRealization(entry); got.Status != RealizationAttached {
+		t.Fatalf("active native bind with same git metadata should be attached, got %#v", got)
+	}
+}

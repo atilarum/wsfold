@@ -181,8 +181,23 @@ func InspectManagedWorktreeRealization(manifest Manifest, entry ManagedWorktreeE
 
 func isExpectedNativeBindMount(info mountPointInfo, entry Entry) bool {
 	source := strings.TrimSpace(info.Source)
-	if source == "" || strings.TrimSpace(entry.CheckoutPath) == "" {
+	if strings.TrimSpace(entry.CheckoutPath) == "" {
+		return false
+	}
+	if sameGitMetadata(entry.CheckoutPath, entry.MountPath) {
+		return true
+	}
+	if source == "" {
 		return false
 	}
 	return filepath.Clean(source) == filepath.Clean(entry.CheckoutPath)
+}
+
+func sameGitMetadata(left string, right string) bool {
+	leftInfo, leftErr := os.Stat(filepath.Join(left, ".git"))
+	rightInfo, rightErr := os.Stat(filepath.Join(right, ".git"))
+	if leftErr != nil || rightErr != nil {
+		return false
+	}
+	return os.SameFile(leftInfo, rightInfo)
 }
