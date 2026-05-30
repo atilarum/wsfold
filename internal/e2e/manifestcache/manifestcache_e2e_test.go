@@ -500,6 +500,40 @@ func TestManifestCacheContractAmbiguousShortRefDiagnostics(t *testing.T) {
 	}
 }
 
+func TestManifestCacheContractInitPreservesCommittedWorkspaceIntent(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h, "WSFOLD_PROJECTS_DIR=.", "WSFOLD_MOUNT_BACKEND=symlink")
+
+	manifestPath := filepath.Join(h.Workspace, "wsfold.yaml")
+	existing := `schema_version: 1
+trusted:
+    - ref: acme/service
+      path: service
+external:
+    - ref: github/tool
+worktrees:
+    - of: acme/service
+      branch: feature/demo
+      path: service-feature-demo
+`
+	if err := os.WriteFile(manifestPath, []byte(existing), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	t.Chdir(h.Workspace)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if err := cli.Run([]string{"init"}, &stdout, &stderr); err != nil {
+		t.Fatalf("init returned error: %v\nstderr: %s", err, stderr.String())
+	}
+	if got := mustRead(t, manifestPath); got != existing {
+		t.Fatalf("init should preserve committed workspace intent\nwant:\n%s\ngot:\n%s", existing, got)
+	}
+	if !strings.Contains(stdout.String(), "already initialized") {
+		t.Fatalf("expected already initialized message, got %q", stdout.String())
+	}
+}
+
 func setEnv(t *testing.T, h *testutil.Harness, extra ...string) {
 	t.Helper()
 	for _, entry := range append(h.Env(), extra...) {

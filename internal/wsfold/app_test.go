@@ -1952,6 +1952,44 @@ func TestInitCreatesManifestAndWorkspace(t *testing.T) {
 	}
 }
 
+func TestInitDoesNotOverwriteExistingManifest(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+
+	existing := `schema_version: 1
+trusted:
+    - ref: acme/service
+      path: service
+external:
+    - ref: github/tool
+worktrees:
+    - of: acme/service
+      branch: feature/demo
+      path: service-feature-demo
+`
+	if err := os.WriteFile(manifestPath(h.Workspace), []byte(existing), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	app := NewApp()
+	var stdout bytes.Buffer
+	app.Stdout = &stdout
+	if err := app.Init(h.Workspace); err != nil {
+		t.Fatalf("Init returned error: %v", err)
+	}
+
+	manifestBytes, err := os.ReadFile(manifestPath(h.Workspace))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	if string(manifestBytes) != existing {
+		t.Fatalf("init should preserve existing manifest\nwant:\n%s\ngot:\n%s", existing, string(manifestBytes))
+	}
+	if !strings.Contains(stdout.String(), "already initialized") {
+		t.Fatalf("expected already initialized message, got %q", stdout.String())
+	}
+}
+
 func TestInitPreservesExistingWorkspaceSections(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnv(t, h)

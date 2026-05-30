@@ -132,12 +132,18 @@ func (a *App) ReindexTrusted() error {
 }
 
 func (a *App) Init(cwd string) error {
-	cfg, err := LoadConfig()
+	primaryRoot, err := currentWorkspaceRoot(cwd)
 	if err != nil {
 		return err
 	}
+	if _, err := os.Stat(manifestPath(primaryRoot)); err == nil {
+		_, _ = fmt.Fprintf(a.Stdout, "already initialized %s\n", primaryRoot)
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect manifest: %w", err)
+	}
 
-	primaryRoot, err := currentWorkspaceRoot(cwd)
+	cfg, err := LoadConfig()
 	if err != nil {
 		return err
 	}
