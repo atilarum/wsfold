@@ -22,6 +22,8 @@ const (
 	AttachmentBackendLinuxNativeBind AttachmentBackend = "linux-native-bind"
 	AttachmentBackendLinuxFuseBind   AttachmentBackend = "linux-fuse-bind"
 
+	AttachmentBackendPolicyAuto = "auto"
+
 	WorktreeControlWorkspaceMountedPrimary WorktreeControlMode  = "workspace-mounted-primary"
 	ManagedWorktreeOwnerWSFold             ManagedWorktreeOwner = "wsfold"
 

@@ -122,6 +122,266 @@ func TestSummonRecoversDeclaredSymlinkAttachment(t *testing.T) {
 	}
 }
 
+func TestAutoSummonRecordsConcreteNativeBackend(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "auto")
+	initWorkspace(t, h)
+	runner := appRunnerWithFakeCommands(t, h, "mount", "umount", "sudo")
+	withBackendPolicyFakes(t, backendPolicyFakes{
+		goos:          "linux",
+		container:     true,
+		capability:    true,
+		appArmor:      "unconfined",
+		appArmorKnown: true,
+	})
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	h.RunGit(repoPath, "remote", "add", "origin", "https://github.com/acme/service.git")
+
+	oldPreflight := nativeBindPreflight
+	oldAttach := nativeBindAttach
+	nativeBindPreflight = func(Runner, Manifest, Entry) error { return nil }
+	nativeBindAttach = func(_ Runner, entry Entry) error {
+		return os.MkdirAll(entry.MountPath, 0o755)
+	}
+	t.Cleanup(func() {
+		nativeBindPreflight = oldPreflight
+		nativeBindAttach = oldAttach
+	})
+
+	app := NewApp()
+	app.Runner = runner
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("Summon returned error: %v", err)
+	}
+
+	cacheBytes, err := os.ReadFile(cachePath(h.Workspace))
+	if err != nil {
+		t.Fatalf("read cache: %v", err)
+	}
+	cache := string(cacheBytes)
+	if !strings.Contains(cache, "backend: linux-native-bind") {
+		t.Fatalf("expected concrete native backend in cache, got:\n%s", cache)
+	}
+	if strings.Contains(cache, "backend: auto") || strings.Contains(cache, "capability") {
+		t.Fatalf("cache should not store auto policy or global capability state:\n%s", cache)
+	}
+}
+
+func TestAutoMountedAttachFailureDoesNotFallback(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "auto")
+	initWorkspace(t, h)
+	runner := appRunnerWithFakeCommands(t, h, "mount", "umount", "sudo", "bindfs", "fusermount3")
+	fusePath := fakeFuseDevice(t)
+	withBackendPolicyFakes(t, backendPolicyFakes{
+		goos:          "linux",
+		container:     true,
+		capability:    true,
+		appArmor:      "unconfined",
+		appArmorKnown: true,
+		fusePath:      fusePath,
+	})
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	h.RunGit(repoPath, "remote", "add", "origin", "https://github.com/acme/service.git")
+
+	oldNativePreflight := nativeBindPreflight
+	oldNativeAttach := nativeBindAttach
+	oldFusePreflight := fuseBindPreflight
+	oldFuseAttach := fuseBindAttach
+	var fuseCalls int
+	nativeBindPreflight = func(Runner, Manifest, Entry) error { return nil }
+	nativeBindAttach = func(Runner, Entry) error { return errors.New("mount denied") }
+	fuseBindPreflight = func(Runner, Manifest, Entry) error {
+		fuseCalls++
+		return nil
+	}
+	fuseBindAttach = func(Runner, Entry) error {
+		fuseCalls++
+		return nil
+	}
+	t.Cleanup(func() {
+		nativeBindPreflight = oldNativePreflight
+		nativeBindAttach = oldNativeAttach
+		fuseBindPreflight = oldFusePreflight
+		fuseBindAttach = oldFuseAttach
+	})
+
+	app := NewApp()
+	app.Runner = runner
+	err := app.Summon(h.Workspace, "service")
+	if err == nil {
+		t.Fatal("expected native bind attach failure")
+	}
+	if !strings.Contains(err.Error(), "auto selected linux-native-bind") {
+		t.Fatalf("expected auto selected backend in error, got %v", err)
+	}
+	if fuseCalls != 0 {
+		t.Fatalf("auto must not fall back to FUSE after selected native bind fails; got %d FUSE calls", fuseCalls)
+	}
+	link := filepath.Join(h.Workspace, "service")
+	if info, statErr := os.Lstat(link); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("auto must not create symlink fallback after mounted attach failure")
+	}
+	if _, statErr := os.Stat(cachePath(h.Workspace)); !os.IsNotExist(statErr) {
+		t.Fatalf("failed attach should not write successful cache row, stat err: %v", statErr)
+	}
+}
+
+func TestAutoSymlinkFallbackWarns(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "auto")
+	initWorkspace(t, h)
+	withBackendPolicyFakes(t, backendPolicyFakes{
+		goos:       "linux",
+		container:  true,
+		capability: false,
+	})
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	h.RunGit(repoPath, "remote", "add", "origin", "https://github.com/acme/service.git")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	var stderr bytes.Buffer
+	app.Stderr = &stderr
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("Summon returned error: %v", err)
+	}
+	cacheBytes, err := os.ReadFile(cachePath(h.Workspace))
+	if err != nil {
+		t.Fatalf("read cache: %v", err)
+	}
+	if !strings.Contains(string(cacheBytes), "backend: symlink") {
+		t.Fatalf("expected symlink backend in cache, got:\n%s", string(cacheBytes))
+	}
+	warning := stderr.String()
+	if !strings.Contains(warning, "symlink trusted attachment") || !strings.Contains(warning, "CAP_SYS_ADMIN") || !strings.Contains(warning, "--security-opt apparmor=unconfined") {
+		t.Fatalf("expected devcontainer symlink warning, got:\n%s", warning)
+	}
+}
+
+func TestCacheWinsRecoveryUntilDeletedThenAutoPolicyApplies(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	h.RunGit(repoPath, "remote", "add", "origin", "https://github.com/acme/service.git")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("initial Summon returned error: %v", err)
+	}
+
+	link := filepath.Join(h.Workspace, "service")
+	if err := os.Remove(link); err != nil {
+		t.Fatalf("remove managed symlink: %v", err)
+	}
+
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "auto")
+	runner := appRunnerWithFakeCommands(t, h, "mount", "umount", "sudo")
+	withBackendPolicyFakes(t, backendPolicyFakes{
+		goos:          "linux",
+		container:     true,
+		capability:    true,
+		appArmor:      "unconfined",
+		appArmorKnown: true,
+	})
+	oldPreflight := nativeBindPreflight
+	oldAttach := nativeBindAttach
+	nativeBindPreflight = func(Runner, Manifest, Entry) error { return nil }
+	nativeBindAttach = func(_ Runner, entry Entry) error {
+		return os.MkdirAll(entry.MountPath, 0o755)
+	}
+	t.Cleanup(func() {
+		nativeBindPreflight = oldPreflight
+		nativeBindAttach = oldAttach
+	})
+
+	app.Runner = runner
+	var stderr bytes.Buffer
+	app.Stderr = &stderr
+	if err := app.Summon(h.Workspace, "acme/service"); err != nil {
+		t.Fatalf("cache-backed recovery returned error: %v", err)
+	}
+	if target, err := os.Readlink(link); err != nil || target != repoPath {
+		t.Fatalf("cache row should recover symlink target %s, got target %s err %v", repoPath, target, err)
+	}
+	cacheBytes, err := os.ReadFile(cachePath(h.Workspace))
+	if err != nil {
+		t.Fatalf("read cache: %v", err)
+	}
+	if !strings.Contains(string(cacheBytes), "backend: symlink") {
+		t.Fatalf("cache row should preserve symlink backend, got:\n%s", string(cacheBytes))
+	}
+
+	if err := os.Remove(cachePath(h.Workspace)); err != nil {
+		t.Fatalf("remove cache: %v", err)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatalf("remove symlink: %v", err)
+	}
+	if err := app.Summon(h.Workspace, "acme/service"); err != nil {
+		t.Fatalf("cache-missing recovery returned error: %v", err)
+	}
+	cacheBytes, err = os.ReadFile(cachePath(h.Workspace))
+	if err != nil {
+		t.Fatalf("read rebuilt cache: %v", err)
+	}
+	if !strings.Contains(string(cacheBytes), "backend: linux-native-bind") {
+		t.Fatalf("cache deletion should make current auto policy apply, got:\n%s", string(cacheBytes))
+	}
+}
+
+func TestStatusDoesNotRunAutoEligibilityOrWriteCache(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	h.RunGit(repoPath, "remote", "add", "origin", "https://github.com/acme/service.git")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("Summon returned error: %v", err)
+	}
+	if err := os.Remove(cachePath(h.Workspace)); err != nil {
+		t.Fatalf("remove cache: %v", err)
+	}
+
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "auto")
+	var capChecks int
+	withBackendPolicyFakes(t, backendPolicyFakes{
+		goos:       "linux",
+		container:  true,
+		capability: true,
+		capCheck: func() {
+			capChecks++
+		},
+	})
+	if _, err := app.Status(h.Workspace); err != nil {
+		t.Fatalf("Status returned error: %v", err)
+	}
+	if capChecks != 0 {
+		t.Fatalf("status must not run auto eligibility, got %d CAP_SYS_ADMIN checks", capChecks)
+	}
+	if _, err := os.Stat(cachePath(h.Workspace)); !os.IsNotExist(err) {
+		t.Fatalf("status must not recreate cache, stat err: %v", err)
+	}
+}
+
 func TestSummonReplacesWrongDeclaredSymlinkTarget(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnv(t, h)
@@ -2080,6 +2340,17 @@ func setEnvWithProjectsDir(t *testing.T, h *testutil.Harness, projectsDir string
 	}
 	t.Setenv("WSFOLD_PROJECTS_DIR", projectsDir)
 	t.Setenv("WSFOLD_MOUNT_BACKEND", "symlink")
+}
+
+func appRunnerWithFakeCommands(t *testing.T, h *testutil.Harness, names ...string) Runner {
+	t.Helper()
+	for _, name := range names {
+		h.WriteExecutable(name, "#!/bin/sh\nexit 0\n")
+	}
+	return Runner{Env: []string{
+		"GIT_CONFIG_GLOBAL=" + h.GitConfig,
+		"PATH=" + filepath.Join(h.Root, "bin") + string(os.PathListSeparator) + os.Getenv("PATH"),
+	}}
 }
 
 func TestSummonCustomProjectsDirStillMountsUnderSubdir(t *testing.T) {

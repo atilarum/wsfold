@@ -1,6 +1,6 @@
 # Linux Devcontainer Native Bind Backend
 
-WSFold uses the `symlink` backend by default. In Linux devcontainers, trusted repositories can instead be attached through native kernel bind mounts by setting:
+WSFold uses `WSFOLD_MOUNT_BACKEND=auto` by default. In Linux devcontainers, auto selects native kernel bind mounts when the container exposes the required mount capability and commands. You can also force the native backend with:
 
 ```bash
 export WSFOLD_MOUNT_BACKEND=linux-native-bind
@@ -8,7 +8,8 @@ export WSFOLD_MOUNT_BACKEND=linux-native-bind
 
 Supported values for `WSFOLD_MOUNT_BACKEND` are:
 
-- `symlink` - default behavior.
+- `auto` - default behavior; choose the first eligible mounted backend before warned symlink fallback.
+- `symlink` - force symlink attachments.
 - `linux-fuse-bind` - Linux host backend using `bindfs --no-allow-other` and `fusermount3 -u`; when used inside Docker-style containers it needs `/dev/fuse` and `CAP_SYS_ADMIN`.
 - `linux-native-bind` - Linux devcontainer backend using `sudo mount --bind` and `sudo umount`.
 
@@ -43,13 +44,13 @@ This backend does not require `/dev/fuse`, `bindfs`, or `fuse3`.
 
 ## Behavior
 
-With `WSFOLD_MOUNT_BACKEND=linux-native-bind`, `wsfold summon` preflights the container and path state, then runs:
+With `WSFOLD_MOUNT_BACKEND=auto` or `WSFOLD_MOUNT_BACKEND=linux-native-bind`, `wsfold summon` preflights the container and path state, then runs:
 
 ```bash
 sudo mount --bind <source-checkout> <workspace-path>
 ```
 
-`wsfold.yaml` records the workspace path, `.wsfold/cache.yaml` records `backend: linux-native-bind` and the source checkout location, and the generated `.code-workspace` points at the managed workspace path.
+`wsfold.yaml` records the workspace path, `.wsfold/cache.yaml` records `backend: linux-native-bind` and the source checkout location, and the generated `.code-workspace` points at the managed workspace path. The cache stores only the concrete backend actually used; it does not store `auto` or global capability state.
 
 `wsfold dismiss` runs:
 
@@ -80,7 +81,7 @@ first when you want read-only diagnostics. Native bind rows reported as `unmount
 wsfold summon-all
 ```
 
-to restore every recoverable declared attachment and dependent managed worktree. Use `wsfold summon <repo-ref>` to recover one item. WSFold uses the backend recorded in `.wsfold/cache.yaml` while that cache row exists, so changing `WSFOLD_MOUNT_BACKEND` later does not change how an existing declaration is recovered. If the cache is deleted, recovery resolves the repository again and uses the current backend policy. Rows reported as `invalid` need manual inspection before retrying because WSFold cannot prove that automatic cleanup is safe.
+to restore every recoverable declared attachment and dependent managed worktree. Use `wsfold summon <repo-ref>` to recover one item. WSFold uses the backend recorded in `.wsfold/cache.yaml` while that cache row exists, so changing `WSFOLD_MOUNT_BACKEND` later does not change how an existing declaration is recovered. If the cache is deleted, recovery resolves the repository again and uses the current backend policy, which may record a different concrete backend. `wsfold status` remains read-only and does not run auto eligibility or recreate cache. Rows reported as `invalid` need manual inspection before retrying because WSFold cannot prove that automatic cleanup is safe.
 
 ## Troubleshooting
 
@@ -96,6 +97,7 @@ to restore every recoverable declared attachment and dependent managed worktree.
 - Missing external root: `wsfold status` reports `invalid`; restore the external checkout path or adjust the composition instead of expecting native bind recovery to clone it.
 - Unmounted managed worktree: `wsfold status` reports `unmounted`; run `wsfold summon <worktree-ref>` or `wsfold summon-all`.
 - Failed partial summon: verify `wsfold.yaml` and `.wsfold/cache.yaml` did not gain a successful new entry, remove any empty managed target directory if needed, and keep the source checkout intact.
+- Symlink fallback warning: auto did not find an eligible mounted backend. In devcontainers, check `CAP_SYS_ADMIN`, non-interactive `sudo`, and `--security-opt apparmor=unconfined`.
 
 ## Manual Backout
 

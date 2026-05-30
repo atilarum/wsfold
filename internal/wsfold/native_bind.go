@@ -19,22 +19,6 @@ var (
 	activeMountInfoFunc = activeMountInfo
 )
 
-func selectedTrustedBackend() (AttachmentBackend, error) {
-	value := strings.TrimSpace(os.Getenv("WSFOLD_MOUNT_BACKEND"))
-	switch AttachmentBackend(value) {
-	case "":
-		return AttachmentBackendSymlink, nil
-	case AttachmentBackendSymlink:
-		return AttachmentBackendSymlink, nil
-	case AttachmentBackendLinuxNativeBind:
-		return AttachmentBackendLinuxNativeBind, nil
-	case AttachmentBackendLinuxFuseBind:
-		return AttachmentBackendLinuxFuseBind, nil
-	default:
-		return "", fmt.Errorf("unsupported WSFOLD_MOUNT_BACKEND %q; supported values are %s, %s, and %s", value, AttachmentBackendSymlink, AttachmentBackendLinuxNativeBind, AttachmentBackendLinuxFuseBind)
-	}
-}
-
 func preflightNativeBind(runner Runner, manifest Manifest, entry Entry) error {
 	if currentGOOS != "linux" {
 		return fmt.Errorf("%s is only supported on Linux; native bind attach uses sudo mount --bind", AttachmentBackendLinuxNativeBind)
@@ -60,6 +44,12 @@ func preflightNativeBind(runner Runner, manifest Manifest, entry Entry) error {
 	}
 	if _, err := runner.Command("", "sudo", "-n", "true"); err != nil {
 		return fmt.Errorf("%s requires non-interactive sudo for sudo mount --bind and sudo umount; sudo -n true failed: %w", AttachmentBackendLinuxNativeBind, err)
+	}
+	if status, known, err := appArmorStatus(); err != nil {
+		// Some containers do not expose AppArmor status to the process. Treat
+		// that as unknown here; attach errors include the actionable hint.
+	} else if known && !appArmorAllowsNativeBind(status) {
+		return fmt.Errorf("%s AppArmor profile %q may block mount syscalls; use --security-opt apparmor=unconfined", AttachmentBackendLinuxNativeBind, status)
 	}
 	if err := validateNativeBindPaths(manifest, entry); err != nil {
 		return err
@@ -125,7 +115,7 @@ func attachNativeBind(runner Runner, entry Entry) error {
 	}
 	if _, err := runner.Command("", "sudo", "mount", "--bind", entry.CheckoutPath, entry.MountPath); err != nil {
 		cleanupNativeBindTarget(entry.MountPath)
-		return fmt.Errorf("sudo mount --bind %s %s failed: %w", entry.CheckoutPath, entry.MountPath, err)
+		return fmt.Errorf("sudo mount --bind %s %s failed: %w; verify CAP_SYS_ADMIN and, in Docker/AppArmor environments, --security-opt apparmor=unconfined", entry.CheckoutPath, entry.MountPath, err)
 	}
 	return nil
 }
