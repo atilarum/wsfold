@@ -384,9 +384,6 @@ func declaredTrustedCompletionCandidates(cwd string, prefix string) []Completion
 			continue
 		}
 		realization := InspectAttachmentRealization(entry)
-		if strings.TrimSpace(entry.ResolutionDetail) != "" {
-			realization.Status = RealizationInvalid
-		}
 		candidates = append(candidates, CompletionCandidate{
 			Key:         entry.Key(),
 			Value:       value,
@@ -430,9 +427,6 @@ func realizationStatusByCheckoutPath(cwd string) map[string]RealizationStatus {
 	}
 	for _, entry := range manifest.Trusted {
 		status := InspectAttachmentRealization(entry).Status
-		if strings.TrimSpace(entry.ResolutionDetail) != "" {
-			status = RealizationInvalid
-		}
 		statuses[repoCompletionKey(Repo{CheckoutPath: entry.CheckoutPath, TrustClass: TrustClassTrusted})] = status
 	}
 	return statuses

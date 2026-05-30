@@ -73,6 +73,33 @@ func TestInspectAttachmentRealizationInvalidStates(t *testing.T) {
 	}
 }
 
+func TestInspectAttachmentRealizationResolutionDetailWins(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	entry := Entry{
+		RepoRef:          "acme/service",
+		CheckoutPath:     repoPath,
+		TrustClass:       TrustClassTrusted,
+		Backend:          AttachmentBackendSymlink,
+		MountPath:        filepath.Join(h.Workspace, "service"),
+		ResolutionDetail: "cache missing for acme/service",
+	}
+	if err := os.Symlink(repoPath, entry.MountPath); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	got := InspectAttachmentRealization(entry)
+	if got.Status != RealizationInvalid {
+		t.Fatalf("resolution detail should make attached entry invalid, got %#v", got)
+	}
+	if got.Reason != entry.ResolutionDetail {
+		t.Fatalf("resolution detail should be the invalid reason, got %q", got.Reason)
+	}
+}
+
 func TestInspectAttachmentRealizationNativeBindAcceptsSameGitMetadata(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnv(t, h)
@@ -105,5 +132,42 @@ func TestInspectAttachmentRealizationNativeBindAcceptsSameGitMetadata(t *testing
 	}
 	if got := InspectAttachmentRealization(entry); got.Status != RealizationAttached {
 		t.Fatalf("active native bind with same git metadata should be attached, got %#v", got)
+	}
+}
+
+func TestInspectManagedWorktreeRealizationInvalidPrimaryResolutionIsNotRecoverable(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	primary := Entry{
+		RepoRef:          "acme/service",
+		CheckoutPath:     repoPath,
+		TrustClass:       TrustClassTrusted,
+		Backend:          AttachmentBackendSymlink,
+		MountPath:        filepath.Join(h.Workspace, "service"),
+		ResolutionDetail: "cache missing for acme/service",
+	}
+	worktree := ManagedWorktreeEntry{
+		RepoRef:             "acme/service/feature/cache",
+		Branch:              "feature/cache",
+		WorkspacePath:       filepath.Join(h.Workspace, "service-feature-cache"),
+		PrimaryRepoRef:      primary.RepoRef,
+		PrimaryCheckoutPath: primary.CheckoutPath,
+		PrimaryMountPath:    primary.MountPath,
+		ControlMode:         WorktreeControlWorkspaceMountedPrimary,
+		Owner:               ManagedWorktreeOwnerWSFold,
+	}
+	manifest := Manifest{
+		Version:          manifestVersion,
+		PrimaryRoot:      h.Workspace,
+		Trusted:          []Entry{primary},
+		ManagedWorktrees: []ManagedWorktreeEntry{worktree},
+	}
+
+	got := InspectManagedWorktreeRealization(manifest, worktree, Runner{})
+	if got.Status != RealizationInvalid {
+		t.Fatalf("invalid primary resolution should not make managed worktree recoverable, got %#v", got)
 	}
 }

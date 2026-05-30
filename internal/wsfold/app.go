@@ -524,10 +524,6 @@ func (a *App) attachRepo(primaryRoot string, cfg Config, repo Repo, requested Tr
 }
 
 func (a *App) reconcileTrustedEntry(primaryRoot string, cfg Config, manifest Manifest, entry Entry) (RealizationStatus, error) {
-	if strings.TrimSpace(entry.ResolutionDetail) != "" {
-		_, _ = fmt.Fprintf(a.Stdout, "%s Trusted repository invalid: %s (%s)\n", ansiRedBold+"✗"+ansiReset, ansiCyanBold+entry.RepoRef+ansiReset, entry.ResolutionDetail)
-		return RealizationInvalid, nil
-	}
 	realization := InspectAttachmentRealization(entry)
 	switch realization.Status {
 	case RealizationAttached:
