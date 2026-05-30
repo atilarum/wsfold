@@ -64,6 +64,7 @@ func TestRunHelp(t *testing.T) {
 		"WSFOLD_MOUNT_BACKEND=linux-native-bind",
 		"sudo mount --bind",
 		"CAP_SYS_ADMIN",
+		"--security-opt apparmor=unconfined",
 	} {
 		if !strings.Contains(output, snippet) {
 			t.Fatalf("help output did not describe mount backend detail %q: %q", snippet, output)

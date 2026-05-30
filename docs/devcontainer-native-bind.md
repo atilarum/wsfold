@@ -14,19 +14,23 @@ Supported values for `WSFOLD_MOUNT_BACKEND` are:
 
 ## Devcontainer Setup
 
-The container must run with `CAP_SYS_ADMIN`. For Docker:
+The container must run with `CAP_SYS_ADMIN`. Docker's default AppArmor profile can
+still block the mount syscall, so Docker-based setups may also need
+`apparmor=unconfined`. For Docker:
 
 ```bash
-docker run --cap-add=SYS_ADMIN ...
+docker run --cap-add=SYS_ADMIN --security-opt apparmor=unconfined ...
 ```
 
 For Docker Compose:
 
 ```yaml
 services:
-  dev:
-    cap_add:
-      - SYS_ADMIN
+	  dev:
+	    cap_add:
+	      - SYS_ADMIN
+	    security_opt:
+	      - apparmor=unconfined
 ```
 
 Do not use `--privileged` for this backend. WSFold requires `CAP_SYS_ADMIN`, `mount`, `umount`, `sudo`, and non-interactive sudo for the mount commands.
@@ -81,6 +85,7 @@ to restore every recoverable declared attachment and dependent managed worktree.
 ## Troubleshooting
 
 - Missing `CAP_SYS_ADMIN`: start the devcontainer with `--cap-add=SYS_ADMIN` or Compose `cap_add: [SYS_ADMIN]`.
+- AppArmor-blocked mounts: add Docker `--security-opt apparmor=unconfined` or Compose `security_opt: [apparmor=unconfined]`.
 - Missing commands: install `sudo`, `mount`, and `umount` in the devcontainer image.
 - Unusable sudo: configure non-interactive sudo for the user running WSFold, or run in a container user where `sudo -n true` succeeds.
 - Duplicate target path: dismiss the existing attachment or change `WSFOLD_PROJECTS_DIR` so each trusted repository gets a distinct workspace path.

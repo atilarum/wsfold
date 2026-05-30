@@ -55,12 +55,12 @@ to restore every recoverable declared attachment and dependent managed worktree.
 
 ## Docker and Devcontainers
 
-FUSE inside Docker-style containers is a container runtime decision. If you choose `linux-fuse-bind` inside a container, pass `/dev/fuse` and add `CAP_SYS_ADMIN`.
+FUSE inside Docker-style containers is a container runtime decision. If you choose `linux-fuse-bind` inside a container, pass `/dev/fuse`, add `CAP_SYS_ADMIN`, and allow the FUSE mount through Docker's AppArmor profile when needed.
 
 Docker example:
 
 ```bash
-docker run --device /dev/fuse --cap-add=SYS_ADMIN ...
+docker run --device /dev/fuse --cap-add=SYS_ADMIN --security-opt apparmor=unconfined ...
 ```
 
 Docker Compose example:
@@ -68,10 +68,12 @@ Docker Compose example:
 ```yaml
 services:
   dev:
-    devices:
-      - /dev/fuse:/dev/fuse
-    cap_add:
-      - SYS_ADMIN
+	    devices:
+	      - /dev/fuse:/dev/fuse
+	    cap_add:
+	      - SYS_ADMIN
+	    security_opt:
+	      - apparmor=unconfined
 ```
 
 Do not use `--privileged` for this backend. If the container cannot expose FUSE cleanly, the `linux-fuse-bind` backend cannot run there; the `linux-native-bind` devcontainer backend is a separate option when its explicit `sudo mount --bind` prerequisites match your environment.
@@ -90,7 +92,7 @@ WSFold preserves intent/cache state on busy unmount failures so retry is safe. I
 - Missing `bindfs`: install the `bindfs` package.
 - Missing `fusermount3`: install FUSE3 tools.
 - Missing `/dev/fuse`: enable FUSE on the Linux host, or pass `/dev/fuse` into a container that intentionally uses this backend.
-- Blocked FUSE in a container: add `--device /dev/fuse` and `--cap-add=SYS_ADMIN`; `linux-native-bind` is a separate devcontainer backend when its prerequisites match your environment.
+- Blocked FUSE in a container: add `--device /dev/fuse`, `--cap-add=SYS_ADMIN`, and `--security-opt apparmor=unconfined`; `linux-native-bind` is a separate devcontainer backend when its prerequisites match your environment.
 - Duplicate target path: dismiss the existing attachment or change `WSFOLD_PROJECTS_DIR` so each trusted repository gets a distinct workspace path.
 - Stale mountpoint: inspect the target and run `fusermount3 -u <workspace-path>` if it is the expected WSFold bindfs mount.
 - Busy mountpoint: change to the workspace root, close terminals, editors, file watchers, and processes using `<workspace-path>` if needed, then rerun `wsfold dismiss <repo-ref>`.

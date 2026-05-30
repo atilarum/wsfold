@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
 set -u
 
+fail() {
+  printf 'FAIL linux-fuse-bind-e2e: %s\n' "$*" >&2
+  exit 1
+}
+
 skip() {
   printf 'SKIP linux-fuse-bind-e2e: %s\n' "$*"
   exit 0
 }
 
-command -v docker >/dev/null 2>&1 || skip "docker command is unavailable"
-docker info >/dev/null 2>&1 || skip "docker daemon is unavailable or not reachable"
+command -v docker >/dev/null 2>&1 || fail "docker command is unavailable"
+docker info >/dev/null 2>&1 || fail "docker daemon is unavailable or not reachable"
 
 if [ "$(uname -s)" != "Linux" ]; then
   skip "Linux is required for the Docker FUSE harness"
@@ -18,10 +23,10 @@ fi
 
 image="wsfold-linux-fuse-bind-e2e:local"
 if ! docker build -f scripts/linux-fuse-bind-e2e.Dockerfile -t "$image" . >/tmp/wsfold-linux-fuse-bind-e2e-build.log 2>&1; then
-  skip "Docker image build failed; see /tmp/wsfold-linux-fuse-bind-e2e-build.log"
+  fail "Docker image build failed; see /tmp/wsfold-linux-fuse-bind-e2e-build.log"
 fi
 
-docker_args=(--rm --device /dev/fuse --cap-add SYS_ADMIN \
+docker_args=(--rm --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
   -e WSFOLD_LINUX_FUSE_BIND_E2E=1 \
   -e WSFOLD_E2E_WSFOLD_BINARY=/usr/local/bin/wsfold)
 

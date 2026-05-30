@@ -28,16 +28,16 @@ func TestLinuxNativeBindLifecycle(t *testing.T) {
 		wsfold = "wsfold"
 	}
 	if _, err := exec.LookPath(wsfold); err != nil && !strings.Contains(wsfold, "/") {
-		t.Skipf("SKIP native-bind-e2e: wsfold test binary is unavailable: %v", err)
+		t.Fatalf("native-bind-e2e: wsfold test binary is unavailable: %v", err)
 	}
 	if strings.Contains(wsfold, "/") {
 		if info, err := os.Stat(wsfold); err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
-			t.Skipf("SKIP native-bind-e2e: wsfold test binary is not executable at %s", wsfold)
+			t.Fatalf("native-bind-e2e: wsfold test binary is not executable at %s", wsfold)
 		}
 	}
 
 	requireCapSysAdmin(t)
-	runOrSkip(t, "", "sudo", "SKIP native-bind-e2e: non-interactive sudo is unavailable", "-n", "true")
+	runOrFail(t, "", "sudo", "native-bind-e2e: non-interactive sudo is unavailable", "-n", "true")
 	requireNativeBindUsable(t)
 
 	root := t.TempDir()
@@ -120,7 +120,7 @@ func TestLinuxNativeBindLifecycle(t *testing.T) {
 func requireCommand(t *testing.T, name string) {
 	t.Helper()
 	if _, err := exec.LookPath(name); err != nil {
-		t.Skipf("SKIP native-bind-e2e: required command %s is unavailable: %v", name, err)
+		t.Fatalf("native-bind-e2e: required command %s is unavailable: %v", name, err)
 	}
 }
 
@@ -128,7 +128,7 @@ func requireCapSysAdmin(t *testing.T) {
 	t.Helper()
 	data, err := os.ReadFile("/proc/self/status")
 	if err != nil {
-		t.Skipf("SKIP native-bind-e2e: cannot inspect CAP_SYS_ADMIN: %v", err)
+		t.Fatalf("native-bind-e2e: cannot inspect CAP_SYS_ADMIN: %v", err)
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		value, ok := strings.CutPrefix(line, "CapBnd:")
@@ -137,14 +137,14 @@ func requireCapSysAdmin(t *testing.T) {
 		}
 		caps, err := strconv.ParseUint(strings.TrimSpace(value), 16, 64)
 		if err != nil {
-			t.Skipf("SKIP native-bind-e2e: cannot parse CapBnd: %v", err)
+			t.Fatalf("native-bind-e2e: cannot parse CapBnd: %v", err)
 		}
 		if caps&(uint64(1)<<capSysAdminBit) == 0 {
-			t.Skip("SKIP native-bind-e2e: CAP_SYS_ADMIN is missing in the test container; run with cap_add: SYS_ADMIN")
+			t.Fatal("native-bind-e2e: CAP_SYS_ADMIN is missing in the test container; run with cap_add: SYS_ADMIN")
 		}
 		return
 	}
-	t.Skip("SKIP native-bind-e2e: CapBnd is missing from /proc/self/status")
+	t.Fatal("native-bind-e2e: CapBnd is missing from /proc/self/status")
 }
 
 func requireNativeBindUsable(t *testing.T) {
@@ -157,7 +157,7 @@ func requireNativeBindUsable(t *testing.T) {
 
 	output, err := command("", "sudo", "mount", "--bind", source, target)
 	if err != nil {
-		t.Skipf("SKIP native-bind-e2e: sudo mount --bind is not usable in this Docker environment: %s", strings.TrimSpace(output))
+		t.Fatalf("native-bind-e2e: sudo mount --bind is not usable in this Docker environment: %s", strings.TrimSpace(output))
 	}
 	output, err = command("", "sudo", "umount", target)
 	if err != nil {
@@ -206,11 +206,11 @@ func runProductExpectError(t *testing.T, dir string, env []string, name string, 
 	return output
 }
 
-func runOrSkip(t *testing.T, dir string, name string, skipMessage string, args ...string) {
+func runOrFail(t *testing.T, dir string, name string, failureMessage string, args ...string) {
 	t.Helper()
 	output, err := command(dir, name, args...)
 	if err != nil {
-		t.Skipf("%s: %s", skipMessage, strings.TrimSpace(output))
+		t.Fatalf("%s: %s", failureMessage, strings.TrimSpace(output))
 	}
 }
 

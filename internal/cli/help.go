@@ -137,7 +137,8 @@ func helpText() string {
 	b.WriteString("fusermount3, and a usable /dev/fuse, set WSFOLD_MOUNT_BACKEND=linux-fuse-bind to run\n")
 	b.WriteString("bindfs --no-allow-other and detach with fusermount3 -u. Linux devcontainers may instead use\n")
 	b.WriteString("WSFOLD_MOUNT_BACKEND=linux-native-bind with sudo mount --bind, CAP_SYS_ADMIN, and usable sudo.\n")
-	b.WriteString("Docker users who choose linux-fuse-bind inside a container must expose /dev/fuse and add CAP_SYS_ADMIN.\n\n")
+	b.WriteString("Docker users who choose linux-fuse-bind inside a container must expose /dev/fuse and add CAP_SYS_ADMIN.\n")
+	b.WriteString("Some Docker runtimes may also require --security-opt apparmor=unconfined when AppArmor blocks mount syscalls.\n\n")
 
 	writeSection(&b, "Commands")
 	for _, entry := range commandHelpEntries {
