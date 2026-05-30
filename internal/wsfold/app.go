@@ -705,14 +705,14 @@ func (a *App) DismissMany(cwd string, refs []string) error {
 		if err != nil {
 			return err
 		}
-		if err := a.dismissRepoEntry(primaryRoot, cfg, manifest, item.entry); err != nil {
+		if err := a.dismissRepoEntry(cwd, primaryRoot, item.ref, cfg, manifest, item.entry); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (a *App) dismissRepoEntry(primaryRoot string, cfg Config, manifest Manifest, entry Entry) error {
+func (a *App) dismissRepoEntry(cwd string, primaryRoot string, ref string, cfg Config, manifest Manifest, entry Entry) error {
 	previous := cloneManifest(manifest)
 
 	if entry.TrustClass == TrustClassTrusted {
@@ -738,10 +738,16 @@ func (a *App) dismissRepoEntry(primaryRoot string, cfg Config, manifest Manifest
 			}
 		case AttachmentBackendLinuxNativeBind:
 			if err := nativeBindDismiss(a.Runner, entry); err != nil {
+				if busy, ok := asBusyUnmountError(err); ok {
+					return formatBusyDismissError(cwd, primaryRoot, ref, busy)
+				}
 				return err
 			}
 		case AttachmentBackendLinuxFuseBind:
 			if err := fuseBindDismiss(a.Runner, entry); err != nil {
+				if busy, ok := asBusyUnmountError(err); ok {
+					return formatBusyDismissError(cwd, primaryRoot, ref, busy)
+				}
 				return err
 			}
 		default:

@@ -78,6 +78,15 @@ services:
 
 Do not use `--privileged` for this backend. If the container cannot expose FUSE cleanly, the `linux-fuse-bind` backend cannot run there; the `linux-native-bind` devcontainer backend is a separate option when its explicit `sudo mount --bind` prerequisites match your environment.
 
+Run bind-backed dismiss from the workspace root, not from inside the mounted repository folder. If `fusermount3 -u` reports `target is busy`, first change to the workspace root, then close terminals, editors, or watchers using the mount if needed, and retry:
+
+```bash
+cd <workspace-root>
+wsfold dismiss <repo-ref>
+```
+
+WSFold preserves manifest state on busy unmount failures so retry is safe. It does not kill processes, force-unmount, lazy-unmount, or delete managed paths by default.
+
 ## Troubleshooting
 
 - Missing `bindfs`: install the `bindfs` package.
@@ -86,7 +95,7 @@ Do not use `--privileged` for this backend. If the container cannot expose FUSE 
 - Blocked FUSE in a container: add `--device /dev/fuse` and `--cap-add=SYS_ADMIN`; `linux-native-bind` is a separate devcontainer backend when its prerequisites match your environment.
 - Duplicate target path: dismiss the existing attachment or change `WSFOLD_PROJECTS_DIR` so each trusted repository gets a distinct `mount_path`.
 - Stale mountpoint: inspect the target and run `fusermount3 -u <mount_path>` if it is the expected WSFold bindfs mount.
-- Busy mountpoint: close terminals, editors, file watchers, and processes using `<mount_path>`, then rerun `wsfold dismiss`.
+- Busy mountpoint: change to the workspace root, close terminals, editors, file watchers, and processes using `<mount_path>` if needed, then rerun `wsfold dismiss <repo-ref>`.
 - Disappeared FUSE mount after restart: run `wsfold status` to confirm whether the row is `unmounted` or `invalid`, then run `wsfold summon <repo-ref>` or `wsfold summon-all` for recoverable rows.
 - Occupied target path: WSFold refuses automatic recovery when `<mount_path>` contains unmanaged files. Preserve or move that content manually, then retry.
 - Missing external root: `wsfold status` reports `invalid`; restore the external checkout path or adjust the composition instead of expecting FUSE recovery to clone it.

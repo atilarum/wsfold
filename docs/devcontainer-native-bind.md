@@ -57,6 +57,15 @@ sudo umount <mount_path>
 
 Then it removes only the empty WSFold-managed mount directory and updates the manifest and workspace file. It does not delete the source checkout.
 
+Run bind-backed dismiss from the workspace root, not from inside the mounted repository folder. If `sudo umount` reports `target is busy`, first change to the workspace root, then close terminals, editors, or watchers using the mount if needed, and retry:
+
+```bash
+cd <workspace-root>
+wsfold dismiss <repo-ref>
+```
+
+WSFold preserves manifest state on busy unmount failures so retry is safe. It does not kill processes, force-unmount, lazy-unmount, or delete managed paths by default.
+
 After a devcontainer restart or mount namespace reset, the manifest can still declare native bind attachments while the runtime mounts are gone. Run:
 
 ```bash
@@ -78,7 +87,7 @@ to restore every recoverable declared attachment and dependent managed worktree.
 - Unusable sudo: configure non-interactive sudo for the user running WSFold, or run in a container user where `sudo -n true` succeeds.
 - Duplicate target path: dismiss the existing attachment or change `WSFOLD_PROJECTS_DIR` so each trusted repository gets a distinct `mount_path`.
 - Stale mountpoint: run `sudo umount <mount_path>`, then retry `wsfold dismiss`.
-- Busy mountpoint: close terminals, editors, file watchers, and processes using `<mount_path>`, then rerun `wsfold dismiss`.
+- Busy mountpoint: change to the workspace root, close terminals, editors, file watchers, and processes using `<mount_path>` if needed, then rerun `wsfold dismiss <repo-ref>`.
 - Disappeared mount after restart: run `wsfold status` to confirm whether the row is `unmounted` or `invalid`, then run `wsfold summon <repo-ref>` or `wsfold summon-all` for recoverable rows.
 - Occupied target path: WSFold refuses automatic recovery when `<mount_path>` contains unmanaged files. Preserve or move that content manually, then retry.
 - Missing external root: `wsfold status` reports `invalid`; restore the external checkout path or adjust the composition instead of expecting native bind recovery to clone it.
