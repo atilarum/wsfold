@@ -5,3 +5,5 @@ services:
       dockerfile: scripts/native-bind-e2e.Dockerfile
     cap_add:
       - SYS_ADMIN
+    security_opt:
+      - apparmor=unconfined

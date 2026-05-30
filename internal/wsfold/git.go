@@ -161,13 +161,13 @@ func resolveWorkspaceRoot(cwd string) (string, error) {
 
 	dir := abs
 	for {
-		if _, err := os.Stat(filepath.Join(dir, ".wsfold")); err == nil {
+		if _, err := os.Stat(manifestPath(dir)); err == nil {
 			return dir, nil
 		}
 
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", fmt.Errorf("no .wsfold workspace found from %s upward; run `wsfold init` first", abs)
+			return "", fmt.Errorf("no wsfold.yaml workspace found from %s upward; run `wsfold init` first", abs)
 		}
 		dir = parent
 	}

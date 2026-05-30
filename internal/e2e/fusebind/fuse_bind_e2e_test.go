@@ -18,7 +18,7 @@ func TestLinuxFuseBindLifecycle(t *testing.T) {
 	}
 
 	if runtimeOS := strings.TrimSpace(commandOutputOrEmpty("uname", "-s")); runtimeOS != "Linux" {
-		t.Skipf("SKIP linux-fuse-bind-e2e: Linux is required, got %q", runtimeOS)
+		t.Fatalf("linux-fuse-bind-e2e: Linux is required, got %q", runtimeOS)
 	}
 	requireCommand(t, "git")
 	requireCommand(t, "bindfs")
@@ -31,11 +31,11 @@ func TestLinuxFuseBindLifecycle(t *testing.T) {
 		wsfold = "wsfold"
 	}
 	if _, err := exec.LookPath(wsfold); err != nil && !strings.Contains(wsfold, "/") {
-		t.Skipf("SKIP linux-fuse-bind-e2e: wsfold test binary is unavailable: %v", err)
+		t.Fatalf("linux-fuse-bind-e2e: wsfold test binary is unavailable: %v", err)
 	}
 	if strings.Contains(wsfold, "/") {
 		if info, err := os.Stat(wsfold); err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
-			t.Skipf("SKIP linux-fuse-bind-e2e: wsfold test binary is not executable at %s", wsfold)
+			t.Fatalf("linux-fuse-bind-e2e: wsfold test binary is not executable at %s", wsfold)
 		}
 	}
 
@@ -78,8 +78,8 @@ func TestLinuxFuseBindLifecycle(t *testing.T) {
 	if !isMountpoint(mountPath) {
 		t.Fatalf("product: expected %s to be an active FUSE bind mount", mountPath)
 	}
-	assertFileContains(t, filepath.Join(workspace, ".wsfold", "manifest.yaml"), "backend: linux-fuse-bind")
-	assertFileContains(t, filepath.Join(workspace, ".wsfold", "manifest.yaml"), "mount_path: "+mountPath)
+	assertFileContains(t, filepath.Join(workspace, ".wsfold", "cache.yaml"), "backend: linux-fuse-bind")
+	assertFileContains(t, filepath.Join(workspace, "wsfold.yaml"), "path: service")
 	assertFileContains(t, filepath.Join(workspace, "workspace.code-workspace"), `"path": "service"`)
 	assertFileNotContains(t, filepath.Join(workspace, "workspace.code-workspace"), source)
 
@@ -104,7 +104,7 @@ func TestLinuxFuseBindLifecycle(t *testing.T) {
 	if !isMountpoint(mountPath) {
 		t.Fatalf("product: busy dismiss should preserve active mountpoint: %s", mountPath)
 	}
-	assertFileContains(t, filepath.Join(workspace, ".wsfold", "manifest.yaml"), "backend: linux-fuse-bind")
+	assertFileContains(t, filepath.Join(workspace, ".wsfold", "cache.yaml"), "backend: linux-fuse-bind")
 	assertFileContains(t, filepath.Join(workspace, "workspace.code-workspace"), `"path": "service"`)
 
 	runProduct(t, workspace, env, wsfold, "dismiss", "service")
@@ -123,7 +123,7 @@ func TestLinuxFuseBindLifecycle(t *testing.T) {
 func requireCommand(t *testing.T, name string) {
 	t.Helper()
 	if _, err := exec.LookPath(name); err != nil {
-		t.Skipf("SKIP linux-fuse-bind-e2e: required command %s is unavailable: %v", name, err)
+		t.Fatalf("linux-fuse-bind-e2e: required command %s is unavailable: %v", name, err)
 	}
 }
 
@@ -131,10 +131,10 @@ func requireFuseDevice(t *testing.T) {
 	t.Helper()
 	info, err := os.Stat("/dev/fuse")
 	if err != nil {
-		t.Skipf("SKIP linux-fuse-bind-e2e: /dev/fuse is unavailable or inaccessible: %v", err)
+		t.Fatalf("linux-fuse-bind-e2e: /dev/fuse is unavailable or inaccessible: %v", err)
 	}
 	if info.IsDir() {
-		t.Skip("SKIP linux-fuse-bind-e2e: /dev/fuse is a directory, not a FUSE device")
+		t.Fatal("linux-fuse-bind-e2e: /dev/fuse is a directory, not a FUSE device")
 	}
 }
 
@@ -142,7 +142,7 @@ func requireCapSysAdmin(t *testing.T) {
 	t.Helper()
 	data, err := os.ReadFile("/proc/self/status")
 	if err != nil {
-		t.Skipf("SKIP linux-fuse-bind-e2e: cannot inspect CAP_SYS_ADMIN: %v", err)
+		t.Fatalf("linux-fuse-bind-e2e: cannot inspect CAP_SYS_ADMIN: %v", err)
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		value, ok := strings.CutPrefix(line, "CapBnd:")
@@ -151,14 +151,14 @@ func requireCapSysAdmin(t *testing.T) {
 		}
 		caps, err := strconv.ParseUint(strings.TrimSpace(value), 16, 64)
 		if err != nil {
-			t.Skipf("SKIP linux-fuse-bind-e2e: cannot parse CapBnd: %v", err)
+			t.Fatalf("linux-fuse-bind-e2e: cannot parse CapBnd: %v", err)
 		}
 		if caps&(uint64(1)<<capSysAdminBit) == 0 {
-			t.Skip("SKIP linux-fuse-bind-e2e: CAP_SYS_ADMIN is missing in the test container; run with cap_add: SYS_ADMIN")
+			t.Fatal("linux-fuse-bind-e2e: CAP_SYS_ADMIN is missing in the test container; run with cap_add: SYS_ADMIN")
 		}
 		return
 	}
-	t.Skip("SKIP linux-fuse-bind-e2e: CapBnd is missing from /proc/self/status")
+	t.Fatal("linux-fuse-bind-e2e: CapBnd is missing from /proc/self/status")
 }
 
 func requireFuseBindUsable(t *testing.T) {
@@ -171,10 +171,10 @@ func requireFuseBindUsable(t *testing.T) {
 
 	output, err := command("", "bindfs", "--no-allow-other", source, target)
 	if err != nil {
-		t.Skipf("SKIP linux-fuse-bind-e2e: bindfs --no-allow-other is not usable in this Docker environment: %s", strings.TrimSpace(output))
+		t.Fatalf("linux-fuse-bind-e2e: bindfs --no-allow-other is not usable in this Docker environment: %s", strings.TrimSpace(output))
 	}
 	if !isMountpoint(target) {
-		t.Skip("SKIP linux-fuse-bind-e2e: bindfs returned success but target is not a mountpoint")
+		t.Fatal("linux-fuse-bind-e2e: bindfs returned success but target is not a mountpoint")
 	}
 	output, err = command("", "fusermount3", "-u", target)
 	if err != nil {

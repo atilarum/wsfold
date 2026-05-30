@@ -48,11 +48,15 @@ func TestSummonExistingTrustedRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}
-	if strings.Count(string(manifestBytes), "repo_ref: acme/service") != 1 {
+	if strings.Count(string(manifestBytes), "ref: acme/service") != 1 {
 		t.Fatalf("expected one trusted manifest entry, got:\n%s", string(manifestBytes))
 	}
-	if !strings.Contains(string(manifestBytes), "backend: symlink") {
-		t.Fatalf("expected symlink backend in manifest, got:\n%s", string(manifestBytes))
+	cacheBytes, err := os.ReadFile(cachePath(h.Workspace))
+	if err != nil {
+		t.Fatalf("read cache: %v", err)
+	}
+	if !strings.Contains(string(cacheBytes), "backend: symlink") {
+		t.Fatalf("expected symlink backend in cache, got:\n%s", string(cacheBytes))
 	}
 
 	workspaceBytes, err := os.ReadFile(workspacePath(h.Workspace))
@@ -66,13 +70,14 @@ func TestSummonExistingTrustedRepo(t *testing.T) {
 		t.Fatalf("workspace should not point trusted root at original checkout path:\n%s", string(workspaceBytes))
 	}
 
-	before := string(manifestBytes) + string(workspaceBytes)
+	before := string(manifestBytes) + string(cacheBytes) + string(workspaceBytes)
 	if err := app.Summon(h.Workspace, "acme/service"); err != nil {
 		t.Fatalf("second Summon returned error: %v", err)
 	}
 	manifestBytes, _ = os.ReadFile(manifestPath(h.Workspace))
+	cacheBytes, _ = os.ReadFile(cachePath(h.Workspace))
 	workspaceBytes, _ = os.ReadFile(workspacePath(h.Workspace))
-	after := string(manifestBytes) + string(workspaceBytes)
+	after := string(manifestBytes) + string(cacheBytes) + string(workspaceBytes)
 	if before != after {
 		t.Fatal("second summon should be idempotent")
 	}
@@ -239,7 +244,7 @@ func TestSummonAllRecoversIndependentEntriesAndReportsInvalid(t *testing.T) {
 func TestSummonRejectsUnsupportedMountBackend(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnv(t, h)
-	t.Setenv("WSFOLD_MOUNT_BACKEND", "macos-fuse-bind")
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "future-bind")
 	initWorkspace(t, h)
 
 	repoPath := filepath.Join(h.TrustedRoot, "service")
@@ -247,7 +252,7 @@ func TestSummonRejectsUnsupportedMountBackend(t *testing.T) {
 	h.RunGit(repoPath, "remote", "add", "origin", "https://github.com/acme/service.git")
 
 	err := NewApp().Summon(h.Workspace, "service")
-	if err == nil || !strings.Contains(err.Error(), "not selectable yet") {
+	if err == nil || !strings.Contains(err.Error(), "unsupported WSFOLD_MOUNT_BACKEND") {
 		t.Fatalf("expected backend selection error, got %v", err)
 	}
 	manifest, loadErr := loadManifest(h.Workspace)
@@ -661,10 +666,10 @@ func TestSummonRejectsUnmanagedTrustedWorktreeByBranchRef(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}
-	if !strings.Contains(string(manifestBytes), "repo_ref: acme/service\n") {
+	if !strings.Contains(string(manifestBytes), "ref: acme/service\n") {
 		t.Fatalf("expected primary manifest entry, got:\n%s", string(manifestBytes))
 	}
-	if strings.Contains(string(manifestBytes), "repo_ref: acme/service/feature/worktree\n") {
+	if strings.Contains(string(manifestBytes), "ref: acme/service/feature/worktree\n") {
 		t.Fatalf("did not expect unmanaged worktree manifest entry, got:\n%s", string(manifestBytes))
 	}
 }
@@ -697,7 +702,7 @@ func TestWorktreeCreatesAndAttachesExistingLocalBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}
-	if !strings.Contains(string(manifestBytes), "managed_worktrees:") || !strings.Contains(string(manifestBytes), "repo_ref: acme/service/feature/worktree\n") {
+	if !strings.Contains(string(manifestBytes), "worktrees:") || !strings.Contains(string(manifestBytes), "of: acme/service\n") || !strings.Contains(string(manifestBytes), "branch: feature/worktree\n") {
 		t.Fatalf("expected managed worktree manifest entry, got:\n%s", string(manifestBytes))
 	}
 }
@@ -1167,7 +1172,7 @@ func TestDismissDoesNotBlockUnrelatedCloneWithSameRepoRef(t *testing.T) {
 		PrimaryRoot: h.Workspace,
 		Trusted: []Entry{
 			{RepoRef: "acme/service", CheckoutPath: firstCheckout, TrustClass: TrustClassTrusted, Backend: AttachmentBackendSymlink, MountPath: firstMount},
-			{RepoRef: "acme/service", CheckoutPath: secondCheckout, TrustClass: TrustClassTrusted, Backend: AttachmentBackendSymlink, MountPath: secondMount},
+			{RepoRef: "acme/service-copy", CheckoutPath: secondCheckout, TrustClass: TrustClassTrusted, Backend: AttachmentBackendSymlink, MountPath: secondMount},
 		},
 		ManagedWorktrees: []ManagedWorktreeEntry{
 			{
@@ -1579,21 +1584,19 @@ func TestDismissUnsupportedTrustedBackendFailsClosed(t *testing.T) {
 	repoPath := filepath.Join(h.TrustedRoot, "service")
 	h.InitRepo(repoPath)
 	mountPath := filepath.Join(h.Workspace, "service")
-	entry := Entry{RepoRef: "acme/service", CheckoutPath: repoPath, TrustClass: TrustClassTrusted, Backend: AttachmentBackendMacOSFuseBind, MountPath: mountPath}
-	if err := saveManifest(h.Workspace, Manifest{Version: manifestVersion, PrimaryRoot: h.Workspace, Trusted: []Entry{entry}}); err != nil {
-		t.Fatalf("save manifest: %v", err)
-	}
+	entry := Entry{RepoRef: "acme/service", CheckoutPath: repoPath, TrustClass: TrustClassTrusted, Backend: AttachmentBackend("future-bind"), MountPath: mountPath}
+	manifest := Manifest{Version: manifestVersion, PrimaryRoot: h.Workspace, Trusted: []Entry{entry}}
 
-	err := NewApp().Dismiss(h.Workspace, "acme/service")
+	err := NewApp().dismissRepoEntry(h.Workspace, h.Workspace, "acme/service", Config{}, manifest, entry)
 	if err == nil || !strings.Contains(err.Error(), "not supported by dismiss yet") {
 		t.Fatalf("expected unsupported backend dismiss error, got %v", err)
 	}
-	manifest, loadErr := loadManifest(h.Workspace)
+	loaded, loadErr := loadManifest(h.Workspace)
 	if loadErr != nil {
 		t.Fatalf("loadManifest returned error: %v", loadErr)
 	}
-	if len(manifest.Trusted) != 1 {
-		t.Fatalf("unsupported dismiss should preserve manifest entry, got %#v", manifest.Trusted)
+	if len(loaded.Trusted) != 0 {
+		t.Fatalf("unsupported in-memory dismiss should not write manifest entry, got %#v", loaded.Trusted)
 	}
 	if _, statErr := os.Stat(repoPath); statErr != nil {
 		t.Fatalf("source checkout should remain: %v", statErr)
@@ -1924,6 +1927,16 @@ func TestInitCreatesManifestAndWorkspace(t *testing.T) {
 	if _, err := os.Stat(manifestPath(h.Workspace)); err != nil {
 		t.Fatalf("expected manifest after init: %v", err)
 	}
+	if _, err := os.Stat(cachePath(h.Workspace)); !os.IsNotExist(err) {
+		t.Fatalf("init should not create cache before local state is resolved, got %v", err)
+	}
+	gitignore, err := os.ReadFile(filepath.Join(h.Workspace, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	if !strings.Contains(string(gitignore), ".wsfold/cache.yaml") {
+		t.Fatalf("init should ignore local cache, got:\n%s", string(gitignore))
+	}
 	workspaceFile := filepath.Join(h.Workspace, filepath.Base(h.Workspace)+".code-workspace")
 	if _, err := os.Stat(workspaceFile); err != nil {
 		t.Fatalf("expected workspace file after init: %v", err)
@@ -1934,6 +1947,44 @@ func TestInitCreatesManifestAndWorkspace(t *testing.T) {
 	}
 	if !strings.Contains(string(workspaceBytes), `"name": "`+filepath.Base(h.Workspace)+`"`) || !strings.Contains(string(workspaceBytes), `"path": "."`) {
 		t.Fatalf("unexpected initialized workspace file:\n%s", string(workspaceBytes))
+	}
+}
+
+func TestInitDoesNotOverwriteExistingManifest(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+
+	existing := `schema_version: 1
+trusted:
+    - ref: acme/service
+      path: service
+external:
+    - ref: github/tool
+worktrees:
+    - of: acme/service
+      branch: feature/demo
+      path: service-feature-demo
+`
+	if err := os.WriteFile(manifestPath(h.Workspace), []byte(existing), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	app := NewApp()
+	var stdout bytes.Buffer
+	app.Stdout = &stdout
+	if err := app.Init(h.Workspace); err != nil {
+		t.Fatalf("Init returned error: %v", err)
+	}
+
+	manifestBytes, err := os.ReadFile(manifestPath(h.Workspace))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	if string(manifestBytes) != existing {
+		t.Fatalf("init should preserve existing manifest\nwant:\n%s\ngot:\n%s", existing, string(manifestBytes))
+	}
+	if !strings.Contains(stdout.String(), "already initialized") {
+		t.Fatalf("expected already initialized message, got %q", stdout.String())
 	}
 }
 
@@ -1990,6 +2041,16 @@ func TestResolveWorkspaceRootFindsNearestManifestUpTree(t *testing.T) {
 	}
 	if root != h.Workspace {
 		t.Fatalf("unexpected resolved workspace root: %s", root)
+	}
+}
+
+func TestResolveWorkspaceRootRequiresWorkspaceManifest(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+
+	_, err := resolveWorkspaceRoot(filepath.Join(h.Workspace, "subdir"))
+	if err == nil || !strings.Contains(err.Error(), "no wsfold.yaml workspace found") {
+		t.Fatalf("expected missing wsfold.yaml error, got %v", err)
 	}
 }
 

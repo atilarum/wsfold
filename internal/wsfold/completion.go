@@ -370,7 +370,7 @@ func declaredTrustedCompletionCandidates(cwd string, prefix string) []Completion
 	}
 	candidates := make([]CompletionCandidate, 0, len(manifest.Trusted))
 	for _, entry := range manifest.Trusted {
-		if isGitRepo(entry.CheckoutPath) {
+		if strings.TrimSpace(entry.ResolutionDetail) == "" && isGitRepo(entry.CheckoutPath) {
 			continue
 		}
 		repo := hydrateManifestRepo(entry, Runner{})
@@ -426,7 +426,8 @@ func realizationStatusByCheckoutPath(cwd string) map[string]RealizationStatus {
 		return statuses
 	}
 	for _, entry := range manifest.Trusted {
-		statuses[repoCompletionKey(Repo{CheckoutPath: entry.CheckoutPath, TrustClass: TrustClassTrusted})] = InspectAttachmentRealization(entry).Status
+		status := InspectAttachmentRealization(entry).Status
+		statuses[repoCompletionKey(Repo{CheckoutPath: entry.CheckoutPath, TrustClass: TrustClassTrusted})] = status
 	}
 	return statuses
 }

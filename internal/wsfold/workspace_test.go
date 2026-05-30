@@ -220,6 +220,44 @@ func TestRenderWorkspaceRejectsTrustedEntryWithoutMountPath(t *testing.T) {
 	}
 }
 
+func TestRenderWorkspaceSkipsUnresolvedTrustedEntries(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	manifest := Manifest{
+		Version:     manifestVersion,
+		PrimaryRoot: root,
+		Trusted: []Entry{
+			{
+				RepoRef:          "acme/service",
+				TrustClass:       TrustClassTrusted,
+				Backend:          AttachmentBackendSymlink,
+				MountPath:        filepath.Join(root, "dangling"),
+				ResolutionDetail: "cache missing for acme/service",
+			},
+			{
+				RepoRef:      "acme/worker",
+				CheckoutPath: "/trusted/acme/worker",
+				TrustClass:   TrustClassTrusted,
+				Backend:      AttachmentBackendSymlink,
+				MountPath:    filepath.Join(root, "worker"),
+			},
+		},
+	}
+
+	data, err := renderWorkspace(root, Manifest{}, manifest, ".")
+	if err != nil {
+		t.Fatalf("renderWorkspace returned error: %v", err)
+	}
+	text := string(data)
+	if strings.Contains(text, `"dangling"`) {
+		t.Fatalf("workspace should skip unresolved trusted folder:\n%s", text)
+	}
+	if !strings.Contains(text, `"worker"`) {
+		t.Fatalf("workspace should include resolved trusted folder:\n%s", text)
+	}
+}
+
 func TestRenderWorkspaceMergesExistingWorkspaceState(t *testing.T) {
 	t.Parallel()
 

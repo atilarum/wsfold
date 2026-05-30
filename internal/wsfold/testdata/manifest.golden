@@ -1,12 +1,6 @@
-version: 1
-primary_root: {{PRIMARY_ROOT}}
+schema_version: 1
 trusted:
-    - repo_ref: acme/service
-      checkout_path: /trusted/acme/service
-      trust_class: trusted
-      backend: symlink
-      mount_path: {{PRIMARY_ROOT}}/service
+    - ref: acme/service
+      path: service
 external:
-    - repo_ref: legacy/tool
-      checkout_path: /external/legacy/tool
-      trust_class: external
+    - ref: legacy/tool

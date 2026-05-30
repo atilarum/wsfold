@@ -30,8 +30,6 @@ func selectedTrustedBackend() (AttachmentBackend, error) {
 		return AttachmentBackendLinuxNativeBind, nil
 	case AttachmentBackendLinuxFuseBind:
 		return AttachmentBackendLinuxFuseBind, nil
-	case AttachmentBackendMacOSFuseBind:
-		return "", fmt.Errorf("WSFOLD_MOUNT_BACKEND=%s is not selectable yet; supported values are %s, %s, and %s", value, AttachmentBackendSymlink, AttachmentBackendLinuxNativeBind, AttachmentBackendLinuxFuseBind)
 	default:
 		return "", fmt.Errorf("unsupported WSFOLD_MOUNT_BACKEND %q; supported values are %s, %s, and %s", value, AttachmentBackendSymlink, AttachmentBackendLinuxNativeBind, AttachmentBackendLinuxFuseBind)
 	}
@@ -142,7 +140,7 @@ func dismissNativeBind(runner Runner, entry Entry) error {
 			if isBusyUnmountErrorText(err) {
 				return &busyUnmountError{Backend: AttachmentBackendLinuxNativeBind, MountPath: entry.MountPath, Err: err}
 			}
-			return fmt.Errorf("sudo umount %s failed; manifest state was preserved for retry: %w", entry.MountPath, err)
+			return fmt.Errorf("sudo umount %s failed; workspace intent and cache state were preserved for retry: %w", entry.MountPath, err)
 		}
 	}
 	if err := removeNativeBindResidue(entry.MountPath); err != nil {

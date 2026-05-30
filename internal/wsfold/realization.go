@@ -22,6 +22,12 @@ type ManagedWorktreeRealization struct {
 
 func InspectAttachmentRealization(entry Entry) AttachmentRealization {
 	result := AttachmentRealization{Entry: entry}
+	if detail := strings.TrimSpace(entry.ResolutionDetail); detail != "" {
+		result.Status = RealizationInvalid
+		result.Reason = detail
+		return result
+	}
+
 	backend := entry.Backend
 	if backend == "" {
 		backend = AttachmentBackendSymlink

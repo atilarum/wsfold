@@ -132,12 +132,18 @@ func (a *App) ReindexTrusted() error {
 }
 
 func (a *App) Init(cwd string) error {
-	cfg, err := LoadConfig()
+	primaryRoot, err := currentWorkspaceRoot(cwd)
 	if err != nil {
 		return err
 	}
+	if _, err := os.Stat(manifestPath(primaryRoot)); err == nil {
+		_, _ = fmt.Fprintf(a.Stdout, "already initialized %s\n", primaryRoot)
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect manifest: %w", err)
+	}
 
-	primaryRoot, err := currentWorkspaceRoot(cwd)
+	cfg, err := LoadConfig()
 	if err != nil {
 		return err
 	}
@@ -153,11 +159,38 @@ func (a *App) Init(cwd string) error {
 	if err := saveManifest(primaryRoot, manifest); err != nil {
 		return err
 	}
+	if err := ensureCacheIgnored(primaryRoot); err != nil {
+		return err
+	}
 	if err := writeWorkspace(primaryRoot, Manifest{}, manifest, cfg.ProjectsDirName); err != nil {
 		return err
 	}
 
 	_, _ = fmt.Fprintf(a.Stdout, "initialized %s\n", primaryRoot)
+	return nil
+}
+
+func ensureCacheIgnored(primaryRoot string) error {
+	path := filepath.Join(primaryRoot, ".gitignore")
+	const entry = ".wsfold/cache.yaml"
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read .gitignore: %w", err)
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if strings.TrimSpace(line) == entry {
+			return nil
+		}
+	}
+	content := string(data)
+	if strings.TrimSpace(content) != "" && !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	content += entry + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("write .gitignore: %w", err)
+	}
 	return nil
 }
 
@@ -200,6 +233,9 @@ func (a *App) summon(cwd string, ref string, requested TrustClass) error {
 				return err
 			}
 			if status == RealizationInvalid {
+				if strings.TrimSpace(entry.ResolutionDetail) != "" {
+					return fmt.Errorf("trusted repository %q is invalid and cannot be recovered automatically: %s", ref, entry.ResolutionDetail)
+				}
 				return fmt.Errorf("trusted repository %q is invalid and cannot be recovered automatically", ref)
 			}
 			return nil
@@ -491,6 +527,11 @@ func (a *App) reconcileTrustedEntry(primaryRoot string, cfg Config, manifest Man
 	realization := InspectAttachmentRealization(entry)
 	switch realization.Status {
 	case RealizationAttached:
+		if entry.CacheInferred {
+			if err := a.persistTrustedCacheResolution(primaryRoot, manifest, entry); err != nil {
+				return RealizationAttached, err
+			}
+		}
 		_, _ = fmt.Fprintf(a.Stdout, "%s Trusted repository already attached: %s\n", ansiGreenBold+"✓"+ansiReset, ansiCyanBold+entry.RepoRef+ansiReset)
 		return RealizationAttached, nil
 	case RealizationInvalid:
@@ -505,6 +546,16 @@ func (a *App) reconcileTrustedEntry(primaryRoot string, cfg Config, manifest Man
 	default:
 		return RealizationInvalid, fmt.Errorf("unknown realization status %q for %s", realization.Status, entry.RepoRef)
 	}
+}
+
+func (a *App) persistTrustedCacheResolution(primaryRoot string, manifest Manifest, entry Entry) error {
+	entry.CacheInferred = false
+	entry.ResolutionDetail = ""
+	manifest.Upsert(entry)
+	if err := saveManifest(primaryRoot, manifest); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (a *App) recoverTrustedEntry(primaryRoot string, cfg Config, manifest Manifest, entry Entry) error {
@@ -540,6 +591,9 @@ func (a *App) recoverTrustedEntry(primaryRoot string, cfg Config, manifest Manif
 		}
 	default:
 		return fmt.Errorf("trusted attachment backend %s is not implemented for recovery", backend)
+	}
+	if err := a.persistTrustedCacheResolution(primaryRoot, manifest, entry); err != nil {
+		return err
 	}
 	if err := writeWorkspace(primaryRoot, previous, manifest, cfg.ProjectsDirName); err != nil {
 		return err
@@ -785,7 +839,7 @@ func (a *App) dismissManagedWorktree(primaryRoot string, cfg Config, manifest Ma
 			return fmt.Errorf("remove managed worktree %s: %w", entry.RepoRef, err)
 		}
 	case ManagedWorktreeMissing:
-		// Missing managed paths contain no directory to delete; this is manifest-only cleanup.
+		// Missing managed paths contain no directory to delete; this is intent-only cleanup.
 	default:
 		return fmt.Errorf("managed worktree %s cannot be dismissed automatically: %s", entry.RepoRef, inspection.Reason)
 	}

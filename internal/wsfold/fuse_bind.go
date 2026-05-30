@@ -115,7 +115,7 @@ func dismissFuseBind(runner Runner, entry Entry) error {
 			if isBusyUnmountErrorText(err) {
 				return &busyUnmountError{Backend: AttachmentBackendLinuxFuseBind, MountPath: entry.MountPath, Err: err}
 			}
-			return fmt.Errorf("fusermount3 -u %s failed; manifest state was preserved for retry: %w", entry.MountPath, err)
+			return fmt.Errorf("fusermount3 -u %s failed; workspace intent and cache state were preserved for retry: %w", entry.MountPath, err)
 		}
 	}
 	if err := removeFuseBindResidue(entry.MountPath); err != nil {

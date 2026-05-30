@@ -58,9 +58,11 @@ func TestStatusCommandContractIsReadOnly(t *testing.T) {
 		t.Fatalf("remove missing external fixture: %v", err)
 	}
 
-	manifestPath := filepath.Join(h.Workspace, ".wsfold", "manifest.yaml")
+	manifestPath := filepath.Join(h.Workspace, "wsfold.yaml")
+	cachePath := filepath.Join(h.Workspace, ".wsfold", "cache.yaml")
 	workspacePath := filepath.Join(h.Workspace, filepath.Base(h.Workspace)+".code-workspace")
 	manifestBefore := mustRead(t, manifestPath)
+	cacheBefore := mustRead(t, cachePath)
 	workspaceBefore := mustRead(t, workspacePath)
 
 	subdir := filepath.Join(h.Workspace, ".status-subdir")
@@ -98,6 +100,9 @@ func TestStatusCommandContractIsReadOnly(t *testing.T) {
 
 	if got := mustRead(t, manifestPath); got != manifestBefore {
 		t.Fatal("status command changed manifest bytes")
+	}
+	if got := mustRead(t, cachePath); got != cacheBefore {
+		t.Fatal("status command changed cache bytes")
 	}
 	if got := mustRead(t, workspacePath); got != workspaceBefore {
 		t.Fatal("status command changed workspace bytes")
