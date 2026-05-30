@@ -231,6 +231,42 @@ func TestManifestCacheContractCacheDeletionRecovery(t *testing.T) {
 	}
 }
 
+func TestManifestCacheContractMissingCacheReportsDiscoveryError(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h, "WSFOLD_PROJECTS_DIR=.", "WSFOLD_MOUNT_BACKEND=symlink")
+	initWorkspace(t, h)
+
+	if err := os.WriteFile(filepath.Join(h.Workspace, "wsfold.yaml"), []byte(`schema_version: 1
+trusted:
+    - ref: acme/service
+      path: service
+`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	if err := os.Remove(filepath.Join(h.Workspace, ".wsfold", "cache.yaml")); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove cache: %v", err)
+	}
+	missingTrustedRoot := filepath.Join(h.Root, "missing-trusted-root")
+	t.Setenv("WSFOLD_TRUSTED_DIR", missingTrustedRoot)
+	t.Chdir(h.Workspace)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if err := cli.Run([]string{"status"}, &stdout, &stderr); err != nil {
+		t.Fatalf("status returned error: %v\nstderr: %s", err, stderr.String())
+	}
+	for _, snippet := range []string{
+		"cache missing for acme/service",
+		"local repository roots are unavailable",
+		"discover repositories",
+		"stat " + missingTrustedRoot,
+	} {
+		if !strings.Contains(stdout.String(), snippet) {
+			t.Fatalf("status output missing %q:\n%s", snippet, stdout.String())
+		}
+	}
+}
+
 func TestManifestCacheContractCacheDeletionAttachedSummonRebuildsCache(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnv(t, h, "WSFOLD_PROJECTS_DIR=.", "WSFOLD_MOUNT_BACKEND=symlink")

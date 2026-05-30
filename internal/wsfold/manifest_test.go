@@ -155,6 +155,99 @@ trusted:
 	}
 }
 
+func TestRuntimeManifestSkipsLocalDiscoveryWhenCacheHasCheckoutPaths(t *testing.T) {
+	root := t.TempDir()
+	trustedRoot := filepath.Join(root, "trusted-root")
+	externalRoot := filepath.Join(root, "external-root")
+	if err := os.MkdirAll(filepath.Join(trustedRoot, "service", ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir trusted repo: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(externalRoot, "tool", ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir external repo: %v", err)
+	}
+	t.Setenv(envTrustedDir, trustedRoot)
+	t.Setenv(envExternalDir, externalRoot)
+
+	workspaceManifest := WorkspaceManifest{
+		SchemaVersion: manifestVersion,
+		Trusted: []TrustedManifestEntry{
+			{Ref: "acme/service", Path: "service"},
+		},
+		External: []ExternalManifestEntry{
+			{Ref: "github/tool"},
+		},
+	}
+	cache := WorkspaceCache{
+		SchemaVersion: manifestVersion,
+		Trusted: []TrustedCacheEntry{
+			{
+				Ref:          "acme/service",
+				CheckoutPath: "/cached/trusted/service",
+				Backend:      AttachmentBackendSymlink,
+			},
+		},
+		External: []ExternalCacheEntry{
+			{
+				Ref:          "github/tool",
+				CheckoutPath: "/cached/external/tool",
+			},
+		},
+	}
+	runner := Runner{ExecCommand: func(name string, dir string, env []string, args ...string) (string, error) {
+		t.Fatalf("runtime manifest should not run %s in %s for full cache hits", name, dir)
+		return "", nil
+	}}
+
+	manifest := runtimeManifestFromWorkspace(root, workspaceManifest, cache, runner)
+	if got := manifest.Trusted[0].CheckoutPath; got != "/cached/trusted/service" {
+		t.Fatalf("trusted checkout_path = %q, want cached path", got)
+	}
+	if got := manifest.External[0].CheckoutPath; got != "/cached/external/tool" {
+		t.Fatalf("external checkout_path = %q, want cached path", got)
+	}
+	if got := manifest.Trusted[0].ResolutionDetail; got != "" {
+		t.Fatalf("trusted resolution detail = %q, want empty", got)
+	}
+	if got := manifest.External[0].ResolutionDetail; got != "" {
+		t.Fatalf("external resolution detail = %q, want empty", got)
+	}
+}
+
+func TestRuntimeManifestReportsLocalDiscoveryErrorOnMissingCache(t *testing.T) {
+	root := t.TempDir()
+	missingTrustedRoot := filepath.Join(root, "missing-trusted-root")
+	externalRoot := filepath.Join(root, "external-root")
+	if err := os.MkdirAll(externalRoot, 0o755); err != nil {
+		t.Fatalf("mkdir external root: %v", err)
+	}
+	t.Setenv(envTrustedDir, missingTrustedRoot)
+	t.Setenv(envExternalDir, externalRoot)
+
+	workspaceManifest := WorkspaceManifest{
+		SchemaVersion: manifestVersion,
+		Trusted: []TrustedManifestEntry{
+			{Ref: "acme/service", Path: "service"},
+		},
+	}
+	cache := WorkspaceCache{SchemaVersion: manifestVersion}
+
+	manifest := runtimeManifestFromWorkspace(root, workspaceManifest, cache, Runner{})
+	if len(manifest.Trusted) != 1 {
+		t.Fatalf("expected one trusted entry, got %d", len(manifest.Trusted))
+	}
+	detail := manifest.Trusted[0].ResolutionDetail
+	for _, snippet := range []string{
+		"cache missing for acme/service",
+		"local repository roots are unavailable",
+		"discover repositories",
+		"stat " + missingTrustedRoot,
+	} {
+		if !strings.Contains(detail, snippet) {
+			t.Fatalf("resolution detail missing %q:\n%s", snippet, detail)
+		}
+	}
+}
+
 func TestManifestRejectsUnsupportedCacheSchemaVersion(t *testing.T) {
 	t.Parallel()
 

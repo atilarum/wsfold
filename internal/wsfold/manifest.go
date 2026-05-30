@@ -169,12 +169,7 @@ func runtimeManifestFromWorkspace(primaryRoot string, workspaceManifest Workspac
 	for _, entry := range cache.External {
 		externalCache[normalizeRepoRef(entry.Ref)] = entry
 	}
-	var localIndex *RepoIndex
-	if cfg, err := LoadConfig(); err == nil {
-		if idx, err := DiscoverRepositories(cfg, runner); err == nil {
-			localIndex = &idx
-		}
-	}
+	localIndex := lazyRepoIndex{runner: runner}
 
 	manifest := Manifest{
 		Version:          manifestVersion,
@@ -189,22 +184,24 @@ func runtimeManifestFromWorkspace(primaryRoot string, workspaceManifest Workspac
 		cacheEntry, cachePresent := trustedCache[normalizeRepoRef(entry.Ref)]
 		var resolutionDetail string
 		cacheInferred := false
-		if strings.TrimSpace(cacheEntry.CheckoutPath) == "" && localIndex != nil {
-			if repo, err := localIndex.Resolve(entry.Ref, TrustClassTrusted); err == nil && !repo.IsWorktree {
-				cacheEntry.Ref = entry.Ref
-				cacheEntry.CheckoutPath = repo.CheckoutPath
-				cacheInferred = true
-				if backend, err := selectedTrustedBackend(); err == nil {
-					cacheEntry.Backend = backend
-				} else {
-					resolutionDetail = err.Error()
-					cacheEntry.Backend = AttachmentBackendSymlink
+		if strings.TrimSpace(cacheEntry.CheckoutPath) == "" {
+			if idx, err := localIndex.get(); err == nil {
+				if repo, err := idx.Resolve(entry.Ref, TrustClassTrusted); err == nil && !repo.IsWorktree {
+					cacheEntry.Ref = entry.Ref
+					cacheEntry.CheckoutPath = repo.CheckoutPath
+					cacheInferred = true
+					if backend, err := selectedTrustedBackend(); err == nil {
+						cacheEntry.Backend = backend
+					} else {
+						resolutionDetail = err.Error()
+						cacheEntry.Backend = AttachmentBackendSymlink
+					}
+				} else if err != nil {
+					resolutionDetail = fmt.Sprintf("cache missing for %s; %v", entry.Ref, err)
 				}
 			} else if err != nil {
-				resolutionDetail = fmt.Sprintf("cache missing for %s; %v", entry.Ref, err)
+				resolutionDetail = fmt.Sprintf("cache missing for %s; local repository roots are unavailable: %v", entry.Ref, err)
 			}
-		} else if strings.TrimSpace(cacheEntry.CheckoutPath) == "" {
-			resolutionDetail = fmt.Sprintf("cache missing for %s and local repository roots are unavailable", entry.Ref)
 		}
 		backend := cacheEntry.Backend
 		if backend == "" {
@@ -237,16 +234,18 @@ func runtimeManifestFromWorkspace(primaryRoot string, workspaceManifest Workspac
 		cacheEntry, cachePresent := externalCache[normalizeRepoRef(entry.Ref)]
 		var resolutionDetail string
 		cacheInferred := false
-		if strings.TrimSpace(cacheEntry.CheckoutPath) == "" && localIndex != nil {
-			if repo, err := localIndex.Resolve(entry.Ref, TrustClassExternal); err == nil && !repo.IsWorktree {
-				cacheEntry.Ref = entry.Ref
-				cacheEntry.CheckoutPath = repo.CheckoutPath
-				cacheInferred = true
+		if strings.TrimSpace(cacheEntry.CheckoutPath) == "" {
+			if idx, err := localIndex.get(); err == nil {
+				if repo, err := idx.Resolve(entry.Ref, TrustClassExternal); err == nil && !repo.IsWorktree {
+					cacheEntry.Ref = entry.Ref
+					cacheEntry.CheckoutPath = repo.CheckoutPath
+					cacheInferred = true
+				} else if err != nil {
+					resolutionDetail = fmt.Sprintf("cache missing for %s; %v", entry.Ref, err)
+				}
 			} else if err != nil {
-				resolutionDetail = fmt.Sprintf("cache missing for %s; %v", entry.Ref, err)
+				resolutionDetail = fmt.Sprintf("cache missing for %s; local repository roots are unavailable: %v", entry.Ref, err)
 			}
-		} else if strings.TrimSpace(cacheEntry.CheckoutPath) == "" {
-			resolutionDetail = fmt.Sprintf("cache missing for %s and local repository roots are unavailable", entry.Ref)
 		}
 		runtime := Entry{
 			RepoRef:      strings.TrimSpace(entry.Ref),
@@ -280,6 +279,33 @@ func runtimeManifestFromWorkspace(primaryRoot string, workspaceManifest Workspac
 		manifest.ManagedWorktrees = append(manifest.ManagedWorktrees, runtime)
 	}
 	return manifest
+}
+
+type lazyRepoIndex struct {
+	runner Runner
+	loaded bool
+	index  *RepoIndex
+	err    error
+}
+
+func (l *lazyRepoIndex) get() (*RepoIndex, error) {
+	if l.loaded {
+		return l.index, l.err
+	}
+	l.loaded = true
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		l.err = fmt.Errorf("load config: %w", err)
+		return nil, l.err
+	}
+	idx, err := DiscoverRepositories(cfg, l.runner)
+	if err != nil {
+		l.err = fmt.Errorf("discover repositories: %w", err)
+		return nil, l.err
+	}
+	l.index = &idx
+	return l.index, nil
 }
 
 func workspaceManifestAndCacheFromRuntime(primaryRoot string, manifest Manifest) (WorkspaceManifest, WorkspaceCache) {
