@@ -5,8 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 type StatusKind string
@@ -95,6 +93,11 @@ func statusTrustedRow(entry Entry, runner Runner) StatusRow {
 		row.Detail = "manifest entry has an empty repo_ref"
 		return row
 	}
+	if strings.TrimSpace(entry.ResolutionDetail) != "" {
+		row.State = RealizationInvalid
+		row.Detail = entry.ResolutionDetail
+		return row
+	}
 	if strings.TrimSpace(entry.CheckoutPath) == "" {
 		row.State = RealizationInvalid
 		row.Detail = "manifest entry has an empty checkout_path"
@@ -137,6 +140,12 @@ func statusExternalRow(entry Entry, runner Runner) StatusRow {
 	if strings.TrimSpace(entry.RepoRef) == "" {
 		row.State = RealizationInvalid
 		row.Detail = "manifest entry has an empty repo_ref"
+		row.Action = "inspect manually"
+		return row
+	}
+	if strings.TrimSpace(entry.ResolutionDetail) != "" {
+		row.State = RealizationInvalid
+		row.Detail = entry.ResolutionDetail
 		row.Action = "inspect manually"
 		return row
 	}
@@ -301,31 +310,15 @@ func statusBranch(runner Runner, path string) string {
 }
 
 func loadStatusManifest(primaryRoot string) (Manifest, error) {
-	path := manifestPath(primaryRoot)
-	data, err := os.ReadFile(path)
+	workspaceManifest, err := loadWorkspaceManifest(primaryRoot)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return Manifest{
-				Version:          manifestVersion,
-				PrimaryRoot:      primaryRoot,
-				Trusted:          []Entry{},
-				External:         []Entry{},
-				ManagedWorktrees: []ManagedWorktreeEntry{},
-			}, nil
-		}
-		return Manifest{}, fmt.Errorf("read manifest: %w", err)
+		return Manifest{}, err
 	}
-
-	var manifest Manifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
-		return Manifest{}, fmt.Errorf("parse manifest: %w", err)
+	cache, err := loadWorkspaceCache(primaryRoot)
+	if err != nil {
+		return Manifest{}, err
 	}
-	if manifest.Version == 0 {
-		manifest.Version = manifestVersion
-	}
-	if manifest.PrimaryRoot == "" {
-		manifest.PrimaryRoot = primaryRoot
-	}
+	manifest := runtimeManifestFromWorkspace(primaryRoot, workspaceManifest, cache, Runner{})
 
 	for i := range manifest.Trusted {
 		entry := &manifest.Trusted[i]

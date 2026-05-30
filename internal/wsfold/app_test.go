@@ -48,11 +48,15 @@ func TestSummonExistingTrustedRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}
-	if strings.Count(string(manifestBytes), "repo_ref: acme/service") != 1 {
+	if strings.Count(string(manifestBytes), "ref: acme/service") != 1 {
 		t.Fatalf("expected one trusted manifest entry, got:\n%s", string(manifestBytes))
 	}
-	if !strings.Contains(string(manifestBytes), "backend: symlink") {
-		t.Fatalf("expected symlink backend in manifest, got:\n%s", string(manifestBytes))
+	cacheBytes, err := os.ReadFile(cachePath(h.Workspace))
+	if err != nil {
+		t.Fatalf("read cache: %v", err)
+	}
+	if !strings.Contains(string(cacheBytes), "backend: symlink") {
+		t.Fatalf("expected symlink backend in cache, got:\n%s", string(cacheBytes))
 	}
 
 	workspaceBytes, err := os.ReadFile(workspacePath(h.Workspace))
@@ -66,13 +70,14 @@ func TestSummonExistingTrustedRepo(t *testing.T) {
 		t.Fatalf("workspace should not point trusted root at original checkout path:\n%s", string(workspaceBytes))
 	}
 
-	before := string(manifestBytes) + string(workspaceBytes)
+	before := string(manifestBytes) + string(cacheBytes) + string(workspaceBytes)
 	if err := app.Summon(h.Workspace, "acme/service"); err != nil {
 		t.Fatalf("second Summon returned error: %v", err)
 	}
 	manifestBytes, _ = os.ReadFile(manifestPath(h.Workspace))
+	cacheBytes, _ = os.ReadFile(cachePath(h.Workspace))
 	workspaceBytes, _ = os.ReadFile(workspacePath(h.Workspace))
-	after := string(manifestBytes) + string(workspaceBytes)
+	after := string(manifestBytes) + string(cacheBytes) + string(workspaceBytes)
 	if before != after {
 		t.Fatal("second summon should be idempotent")
 	}
@@ -661,10 +666,10 @@ func TestSummonRejectsUnmanagedTrustedWorktreeByBranchRef(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}
-	if !strings.Contains(string(manifestBytes), "repo_ref: acme/service\n") {
+	if !strings.Contains(string(manifestBytes), "ref: acme/service\n") {
 		t.Fatalf("expected primary manifest entry, got:\n%s", string(manifestBytes))
 	}
-	if strings.Contains(string(manifestBytes), "repo_ref: acme/service/feature/worktree\n") {
+	if strings.Contains(string(manifestBytes), "ref: acme/service/feature/worktree\n") {
 		t.Fatalf("did not expect unmanaged worktree manifest entry, got:\n%s", string(manifestBytes))
 	}
 }
@@ -697,7 +702,7 @@ func TestWorktreeCreatesAndAttachesExistingLocalBranch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}
-	if !strings.Contains(string(manifestBytes), "managed_worktrees:") || !strings.Contains(string(manifestBytes), "repo_ref: acme/service/feature/worktree\n") {
+	if !strings.Contains(string(manifestBytes), "worktrees:") || !strings.Contains(string(manifestBytes), "of: acme/service\n") || !strings.Contains(string(manifestBytes), "branch: feature/worktree\n") {
 		t.Fatalf("expected managed worktree manifest entry, got:\n%s", string(manifestBytes))
 	}
 }
@@ -1167,7 +1172,7 @@ func TestDismissDoesNotBlockUnrelatedCloneWithSameRepoRef(t *testing.T) {
 		PrimaryRoot: h.Workspace,
 		Trusted: []Entry{
 			{RepoRef: "acme/service", CheckoutPath: firstCheckout, TrustClass: TrustClassTrusted, Backend: AttachmentBackendSymlink, MountPath: firstMount},
-			{RepoRef: "acme/service", CheckoutPath: secondCheckout, TrustClass: TrustClassTrusted, Backend: AttachmentBackendSymlink, MountPath: secondMount},
+			{RepoRef: "acme/service-copy", CheckoutPath: secondCheckout, TrustClass: TrustClassTrusted, Backend: AttachmentBackendSymlink, MountPath: secondMount},
 		},
 		ManagedWorktrees: []ManagedWorktreeEntry{
 			{
@@ -1924,6 +1929,16 @@ func TestInitCreatesManifestAndWorkspace(t *testing.T) {
 	if _, err := os.Stat(manifestPath(h.Workspace)); err != nil {
 		t.Fatalf("expected manifest after init: %v", err)
 	}
+	if _, err := os.Stat(cachePath(h.Workspace)); !os.IsNotExist(err) {
+		t.Fatalf("init should not create cache before local state is resolved, got %v", err)
+	}
+	gitignore, err := os.ReadFile(filepath.Join(h.Workspace, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	if !strings.Contains(string(gitignore), ".wsfold/cache.yaml") {
+		t.Fatalf("init should ignore local cache, got:\n%s", string(gitignore))
+	}
 	workspaceFile := filepath.Join(h.Workspace, filepath.Base(h.Workspace)+".code-workspace")
 	if _, err := os.Stat(workspaceFile); err != nil {
 		t.Fatalf("expected workspace file after init: %v", err)
@@ -1990,6 +2005,23 @@ func TestResolveWorkspaceRootFindsNearestManifestUpTree(t *testing.T) {
 	}
 	if root != h.Workspace {
 		t.Fatalf("unexpected resolved workspace root: %s", root)
+	}
+}
+
+func TestResolveWorkspaceRootRequiresWorkspaceManifest(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+
+	if err := os.MkdirAll(filepath.Join(h.Workspace, ".wsfold"), 0o755); err != nil {
+		t.Fatalf("mkdir metadata directory: %v", err)
+	}
+	if err := os.WriteFile(legacyManifestPath(h.Workspace), []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatalf("write unrelated metadata file: %v", err)
+	}
+
+	_, err := resolveWorkspaceRoot(filepath.Join(h.Workspace, "subdir"))
+	if err == nil || !strings.Contains(err.Error(), "no wsfold.yaml workspace found") {
+		t.Fatalf("expected missing wsfold.yaml error, got %v", err)
 	}
 }
 

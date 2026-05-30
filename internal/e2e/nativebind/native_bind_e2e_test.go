@@ -76,7 +76,7 @@ func TestLinuxNativeBindLifecycle(t *testing.T) {
 	if !isMountpoint(mountPath) {
 		t.Fatalf("product: expected %s to be an active native bind mount", mountPath)
 	}
-	assertFileContains(t, filepath.Join(workspace, ".wsfold", "manifest.yaml"), "backend: linux-native-bind")
+	assertFileContains(t, filepath.Join(workspace, ".wsfold", "cache.yaml"), "backend: linux-native-bind")
 	assertFileContains(t, filepath.Join(workspace, "workspace.code-workspace"), `"path": "service"`)
 	assertFileNotContains(t, filepath.Join(workspace, "workspace.code-workspace"), source)
 
@@ -101,7 +101,7 @@ func TestLinuxNativeBindLifecycle(t *testing.T) {
 	if !isMountpoint(mountPath) {
 		t.Fatalf("product: busy dismiss should preserve active mountpoint: %s", mountPath)
 	}
-	assertFileContains(t, filepath.Join(workspace, ".wsfold", "manifest.yaml"), "backend: linux-native-bind")
+	assertFileContains(t, filepath.Join(workspace, ".wsfold", "cache.yaml"), "backend: linux-native-bind")
 	assertFileContains(t, filepath.Join(workspace, "workspace.code-workspace"), `"path": "service"`)
 
 	runProduct(t, workspace, env, wsfold, "dismiss", "service")

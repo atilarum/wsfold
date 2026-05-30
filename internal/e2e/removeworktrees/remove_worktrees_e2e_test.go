@@ -45,7 +45,8 @@ func TestRemoveWorktreesContract(t *testing.T) {
 	if err := app.Worktree(h.Workspace, "service", "contract-managed", wsfold.WorktreeOptions{CreateBranch: true}); err != nil {
 		t.Fatalf("Worktree returned error: %v", err)
 	}
-	manifestBefore := mustRead(t, filepath.Join(h.Workspace, ".wsfold", "manifest.yaml"))
+	manifestBefore := mustRead(t, filepath.Join(h.Workspace, "wsfold.yaml"))
+	cacheBefore := mustRead(t, filepath.Join(h.Workspace, ".wsfold", "cache.yaml"))
 	workspaceBefore := mustRead(t, filepath.Join(h.Workspace, filepath.Base(h.Workspace)+".code-workspace"))
 
 	inventory, err := app.ExternalWorktreeRemovalInventory(h.Workspace)
@@ -85,8 +86,11 @@ func TestRemoveWorktreesContract(t *testing.T) {
 	if !strings.Contains(list, staleB) {
 		t.Fatalf("unselected stale metadata should remain, got %q", list)
 	}
-	if string(manifestBefore) != string(mustRead(t, filepath.Join(h.Workspace, ".wsfold", "manifest.yaml"))) {
+	if string(manifestBefore) != string(mustRead(t, filepath.Join(h.Workspace, "wsfold.yaml"))) {
 		t.Fatalf("manifest bytes changed")
+	}
+	if string(cacheBefore) != string(mustRead(t, filepath.Join(h.Workspace, ".wsfold", "cache.yaml"))) {
+		t.Fatalf("cache bytes changed")
 	}
 	if string(workspaceBefore) != string(mustRead(t, filepath.Join(h.Workspace, filepath.Base(h.Workspace)+".code-workspace"))) {
 		t.Fatalf("workspace bytes changed")

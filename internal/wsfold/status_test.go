@@ -198,18 +198,24 @@ func TestStatusProjectionDegradesMalformedRowsWithoutFailingReport(t *testing.T)
 
 	externalPath := filepath.Join(h.ExternalRoot, "legacy-tool")
 	h.InitRepo(externalPath)
-	if err := os.WriteFile(manifestPath(h.Workspace), []byte(`version: 1
-primary_root: `+h.Workspace+`
+	if err := os.WriteFile(manifestPath(h.Workspace), []byte(`schema_version: 1
 trusted:
-  - repo_ref: acme/legacy
-    checkout_path: `+filepath.Join(h.TrustedRoot, "legacy")+`
-    trust_class: trusted
+  - ref: acme/legacy
+    path: legacy
 external:
-  - repo_ref: github/legacy-tool
-    checkout_path: `+externalPath+`
-    trust_class: external
+  - ref: github/legacy-tool
 `), 0o644); err != nil {
 		t.Fatalf("write malformed manifest fixture: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(cachePath(h.Workspace)), 0o755); err != nil {
+		t.Fatalf("mkdir cache dir: %v", err)
+	}
+	if err := os.WriteFile(cachePath(h.Workspace), []byte(`schema_version: 1
+external:
+  - ref: github/legacy-tool
+    checkout_path: `+externalPath+`
+`), 0o644); err != nil {
+		t.Fatalf("write cache fixture: %v", err)
 	}
 
 	report, err := NewApp().Status(h.Workspace)

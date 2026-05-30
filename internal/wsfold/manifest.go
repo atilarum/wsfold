@@ -29,36 +29,27 @@ func cloneManifest(in Manifest) Manifest {
 }
 
 func manifestPath(primaryRoot string) string {
+	return filepath.Join(primaryRoot, "wsfold.yaml")
+}
+
+func cachePath(primaryRoot string) string {
+	return filepath.Join(primaryRoot, ".wsfold", "cache.yaml")
+}
+
+func legacyManifestPath(primaryRoot string) string {
 	return filepath.Join(primaryRoot, ".wsfold", "manifest.yaml")
 }
 
 func loadManifest(primaryRoot string) (Manifest, error) {
-	path := manifestPath(primaryRoot)
-	data, err := os.ReadFile(path)
+	workspaceManifest, err := loadWorkspaceManifest(primaryRoot)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return Manifest{
-				Version:          manifestVersion,
-				PrimaryRoot:      primaryRoot,
-				Trusted:          []Entry{},
-				External:         []Entry{},
-				ManagedWorktrees: []ManagedWorktreeEntry{},
-			}, nil
-		}
-		return Manifest{}, fmt.Errorf("read manifest: %w", err)
+		return Manifest{}, err
 	}
-
-	var manifest Manifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
-		return Manifest{}, fmt.Errorf("parse manifest: %w", err)
+	cache, err := loadWorkspaceCache(primaryRoot)
+	if err != nil {
+		return Manifest{}, err
 	}
-
-	if manifest.Version == 0 {
-		manifest.Version = manifestVersion
-	}
-	if manifest.PrimaryRoot == "" {
-		manifest.PrimaryRoot = primaryRoot
-	}
+	manifest := runtimeManifestFromWorkspace(primaryRoot, workspaceManifest, cache, Runner{})
 	if err := normalizeManifest(&manifest); err != nil {
 		return Manifest{}, err
 	}
@@ -78,16 +69,486 @@ func saveManifest(primaryRoot string, manifest Manifest) error {
 	sortEntries(manifest.External)
 	sortManagedWorktrees(manifest.ManagedWorktrees)
 
-	if err := os.MkdirAll(filepath.Dir(manifestPath(primaryRoot)), 0o755); err != nil {
-		return fmt.Errorf("create manifest directory: %w", err)
+	workspaceManifest, cache := workspaceManifestAndCacheFromRuntime(primaryRoot, manifest)
+	if err := validateWorkspaceManifest(workspaceManifest); err != nil {
+		return err
 	}
+	if err := validateWorkspaceCache(cache); err != nil {
+		return err
+	}
+	preserveInvalidCacheRows(&cache, manifest)
+	sortWorkspaceCache(&cache)
 
-	data, err := yaml.Marshal(&manifest)
+	data, err := yaml.Marshal(&workspaceManifest)
 	if err != nil {
 		return fmt.Errorf("marshal manifest: %w", err)
 	}
+	if err := os.WriteFile(manifestPath(primaryRoot), data, 0o644); err != nil {
+		return fmt.Errorf("write manifest: %w", err)
+	}
 
-	return os.WriteFile(manifestPath(primaryRoot), data, 0o644)
+	if len(cache.Trusted) == 0 && len(cache.External) == 0 {
+		if err := os.Remove(cachePath(primaryRoot)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove empty cache: %w", err)
+		}
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(cachePath(primaryRoot)), 0o755); err != nil {
+		return fmt.Errorf("create cache directory: %w", err)
+	}
+	cacheData, err := yaml.Marshal(&cache)
+	if err != nil {
+		return fmt.Errorf("marshal cache: %w", err)
+	}
+	if err := os.WriteFile(cachePath(primaryRoot), cacheData, 0o644); err != nil {
+		return fmt.Errorf("write cache: %w", err)
+	}
+	return nil
+}
+
+func loadWorkspaceManifest(primaryRoot string) (WorkspaceManifest, error) {
+	data, err := os.ReadFile(manifestPath(primaryRoot))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return WorkspaceManifest{
+				SchemaVersion: manifestVersion,
+				Trusted:       []TrustedManifestEntry{},
+				External:      []ExternalManifestEntry{},
+				Worktrees:     []WorktreeManifestEntry{},
+			}, nil
+		}
+		return WorkspaceManifest{}, fmt.Errorf("read manifest: %w", err)
+	}
+
+	var manifest WorkspaceManifest
+	if err := yaml.Unmarshal(data, &manifest); err != nil {
+		return WorkspaceManifest{}, fmt.Errorf("parse manifest: %w", err)
+	}
+	if manifest.SchemaVersion == 0 {
+		manifest.SchemaVersion = manifestVersion
+	}
+	if err := validateWorkspaceManifest(manifest); err != nil {
+		return WorkspaceManifest{}, err
+	}
+	sortWorkspaceManifest(&manifest)
+	return manifest, nil
+}
+
+func loadWorkspaceCache(primaryRoot string) (WorkspaceCache, error) {
+	data, err := os.ReadFile(cachePath(primaryRoot))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return WorkspaceCache{
+				SchemaVersion: manifestVersion,
+				Trusted:       []TrustedCacheEntry{},
+				External:      []ExternalCacheEntry{},
+			}, nil
+		}
+		return WorkspaceCache{}, fmt.Errorf("read cache: %w", err)
+	}
+
+	var cache WorkspaceCache
+	if err := yaml.Unmarshal(data, &cache); err != nil {
+		return WorkspaceCache{}, fmt.Errorf("parse cache: %w", err)
+	}
+	if cache.SchemaVersion == 0 {
+		cache.SchemaVersion = manifestVersion
+	}
+	if cache.SchemaVersion != manifestVersion {
+		return WorkspaceCache{}, fmt.Errorf("unsupported workspace cache schema_version %d", cache.SchemaVersion)
+	}
+	if err := validateWorkspaceCacheShape(cache); err != nil {
+		return WorkspaceCache{}, err
+	}
+	sortWorkspaceCache(&cache)
+	return cache, nil
+}
+
+func runtimeManifestFromWorkspace(primaryRoot string, workspaceManifest WorkspaceManifest, cache WorkspaceCache, runner Runner) Manifest {
+	trustedCache := map[string]TrustedCacheEntry{}
+	for _, entry := range cache.Trusted {
+		trustedCache[normalizeRepoRef(entry.Ref)] = entry
+	}
+	externalCache := map[string]ExternalCacheEntry{}
+	for _, entry := range cache.External {
+		externalCache[normalizeRepoRef(entry.Ref)] = entry
+	}
+	var localIndex *RepoIndex
+	if cfg, err := LoadConfig(); err == nil {
+		if idx, err := DiscoverRepositories(cfg, runner); err == nil {
+			localIndex = &idx
+		}
+	}
+
+	manifest := Manifest{
+		Version:          manifestVersion,
+		PrimaryRoot:      primaryRoot,
+		Trusted:          []Entry{},
+		External:         []Entry{},
+		ManagedWorktrees: []ManagedWorktreeEntry{},
+	}
+
+	trustedByRef := map[string]Entry{}
+	for _, entry := range workspaceManifest.Trusted {
+		cacheEntry, cachePresent := trustedCache[normalizeRepoRef(entry.Ref)]
+		var resolutionDetail string
+		cacheInferred := false
+		if strings.TrimSpace(cacheEntry.CheckoutPath) == "" && localIndex != nil {
+			if repo, err := localIndex.Resolve(entry.Ref, TrustClassTrusted); err == nil && !repo.IsWorktree {
+				cacheEntry.Ref = entry.Ref
+				cacheEntry.CheckoutPath = repo.CheckoutPath
+				cacheInferred = true
+				if backend, err := selectedTrustedBackend(); err == nil {
+					cacheEntry.Backend = backend
+				} else {
+					resolutionDetail = err.Error()
+					cacheEntry.Backend = AttachmentBackendSymlink
+				}
+			} else if err != nil {
+				resolutionDetail = fmt.Sprintf("cache missing for %s; %v", entry.Ref, err)
+			}
+		} else if strings.TrimSpace(cacheEntry.CheckoutPath) == "" {
+			resolutionDetail = fmt.Sprintf("cache missing for %s and local repository roots are unavailable", entry.Ref)
+		}
+		backend := cacheEntry.Backend
+		if backend == "" {
+			backend = AttachmentBackendSymlink
+		}
+		if strings.TrimSpace(string(cacheEntry.Backend)) != "" && !isSupportedAttachmentBackend(cacheEntry.Backend) {
+			resolutionDetail = fmt.Sprintf("trusted cache backend %s is not supported", cacheEntry.Backend)
+			backend = AttachmentBackendSymlink
+		}
+		runtime := Entry{
+			RepoRef:      strings.TrimSpace(entry.Ref),
+			CheckoutPath: filepath.Clean(cacheEntry.CheckoutPath),
+			TrustClass:   TrustClassTrusted,
+			Backend:      backend,
+			MountPath:    filepath.Join(primaryRoot, filepath.FromSlash(entry.Path)),
+		}
+		runtime.ResolutionDetail = resolutionDetail
+		runtime.CacheInferred = cacheInferred
+		runtime.CachePresent = cachePresent
+		runtime.CachedCheckout = cacheEntry.CheckoutPath
+		runtime.CachedBackend = cacheEntry.Backend
+		if strings.TrimSpace(cacheEntry.CheckoutPath) == "" {
+			runtime.CheckoutPath = ""
+		}
+		manifest.Trusted = append(manifest.Trusted, runtime)
+		trustedByRef[normalizeRepoRef(runtime.RepoRef)] = runtime
+	}
+
+	for _, entry := range workspaceManifest.External {
+		cacheEntry, cachePresent := externalCache[normalizeRepoRef(entry.Ref)]
+		var resolutionDetail string
+		cacheInferred := false
+		if strings.TrimSpace(cacheEntry.CheckoutPath) == "" && localIndex != nil {
+			if repo, err := localIndex.Resolve(entry.Ref, TrustClassExternal); err == nil && !repo.IsWorktree {
+				cacheEntry.Ref = entry.Ref
+				cacheEntry.CheckoutPath = repo.CheckoutPath
+				cacheInferred = true
+			} else if err != nil {
+				resolutionDetail = fmt.Sprintf("cache missing for %s; %v", entry.Ref, err)
+			}
+		} else if strings.TrimSpace(cacheEntry.CheckoutPath) == "" {
+			resolutionDetail = fmt.Sprintf("cache missing for %s and local repository roots are unavailable", entry.Ref)
+		}
+		runtime := Entry{
+			RepoRef:      strings.TrimSpace(entry.Ref),
+			CheckoutPath: filepath.Clean(cacheEntry.CheckoutPath),
+			TrustClass:   TrustClassExternal,
+		}
+		runtime.ResolutionDetail = resolutionDetail
+		runtime.CacheInferred = cacheInferred
+		runtime.CachePresent = cachePresent
+		runtime.CachedCheckout = cacheEntry.CheckoutPath
+		if strings.TrimSpace(cacheEntry.CheckoutPath) == "" {
+			runtime.CheckoutPath = ""
+		}
+		manifest.External = append(manifest.External, runtime)
+	}
+
+	for _, entry := range workspaceManifest.Worktrees {
+		primary := trustedByRef[normalizeRepoRef(entry.Of)]
+		branch := strings.TrimSpace(entry.Branch)
+		runtime := ManagedWorktreeEntry{
+			RepoRef:             strings.TrimSpace(entry.Of) + "/" + branch,
+			Branch:              branch,
+			WorkspacePath:       filepath.Join(primaryRoot, filepath.FromSlash(entry.Path)),
+			PrimaryRepoRef:      strings.TrimSpace(entry.Of),
+			PrimaryCheckoutPath: primary.CheckoutPath,
+			PrimaryMountPath:    primary.MountPath,
+			ControlMode:         WorktreeControlWorkspaceMountedPrimary,
+			Owner:               ManagedWorktreeOwnerWSFold,
+			CreationSource:      "wsfold worktree",
+		}
+		manifest.ManagedWorktrees = append(manifest.ManagedWorktrees, runtime)
+	}
+	return manifest
+}
+
+func workspaceManifestAndCacheFromRuntime(primaryRoot string, manifest Manifest) (WorkspaceManifest, WorkspaceCache) {
+	out := WorkspaceManifest{
+		SchemaVersion: manifestVersion,
+		Trusted:       make([]TrustedManifestEntry, 0, len(manifest.Trusted)),
+		External:      make([]ExternalManifestEntry, 0, len(manifest.External)),
+		Worktrees:     make([]WorktreeManifestEntry, 0, len(manifest.ManagedWorktrees)),
+	}
+	cache := WorkspaceCache{
+		SchemaVersion: manifestVersion,
+		Trusted:       make([]TrustedCacheEntry, 0, len(manifest.Trusted)),
+		External:      make([]ExternalCacheEntry, 0, len(manifest.External)),
+	}
+
+	for _, entry := range manifest.Trusted {
+		out.Trusted = append(out.Trusted, TrustedManifestEntry{
+			Ref:  strings.TrimSpace(entry.RepoRef),
+			Path: mustWorkspaceRelativePath(primaryRoot, entry.MountPath),
+		})
+		if strings.TrimSpace(entry.CheckoutPath) != "" && !entry.CacheInferred && strings.TrimSpace(entry.ResolutionDetail) == "" {
+			backend := entry.Backend
+			if backend == "" {
+				backend = AttachmentBackendSymlink
+			}
+			cache.Trusted = append(cache.Trusted, TrustedCacheEntry{
+				Ref:          strings.TrimSpace(entry.RepoRef),
+				CheckoutPath: filepath.Clean(entry.CheckoutPath),
+				Backend:      backend,
+			})
+		}
+	}
+	for _, entry := range manifest.External {
+		out.External = append(out.External, ExternalManifestEntry{Ref: strings.TrimSpace(entry.RepoRef)})
+		if strings.TrimSpace(entry.CheckoutPath) != "" && !entry.CacheInferred && strings.TrimSpace(entry.ResolutionDetail) == "" {
+			cache.External = append(cache.External, ExternalCacheEntry{
+				Ref:          strings.TrimSpace(entry.RepoRef),
+				CheckoutPath: filepath.Clean(entry.CheckoutPath),
+			})
+		}
+	}
+	for _, entry := range manifest.ManagedWorktrees {
+		if entry.UnsupportedLegacy {
+			continue
+		}
+		out.Worktrees = append(out.Worktrees, WorktreeManifestEntry{
+			Of:     strings.TrimSpace(entry.PrimaryRepoRef),
+			Branch: strings.TrimSpace(entry.Branch),
+			Path:   mustWorkspaceRelativePath(primaryRoot, entry.WorkspacePath),
+		})
+	}
+
+	sortWorkspaceManifest(&out)
+	sortWorkspaceCache(&cache)
+	return out, cache
+}
+
+func preserveInvalidCacheRows(cache *WorkspaceCache, manifest Manifest) {
+	for _, entry := range manifest.Trusted {
+		if strings.TrimSpace(entry.ResolutionDetail) == "" || !entry.CachePresent || strings.TrimSpace(entry.CachedCheckout) == "" {
+			continue
+		}
+		if hasTrustedCacheRef(*cache, entry.RepoRef) {
+			continue
+		}
+		cache.Trusted = append(cache.Trusted, TrustedCacheEntry{
+			Ref:          strings.TrimSpace(entry.RepoRef),
+			CheckoutPath: filepath.Clean(entry.CachedCheckout),
+			Backend:      entry.CachedBackend,
+		})
+	}
+	for _, entry := range manifest.External {
+		if strings.TrimSpace(entry.ResolutionDetail) == "" || !entry.CachePresent || strings.TrimSpace(entry.CachedCheckout) == "" {
+			continue
+		}
+		if hasExternalCacheRef(*cache, entry.RepoRef) {
+			continue
+		}
+		cache.External = append(cache.External, ExternalCacheEntry{
+			Ref:          strings.TrimSpace(entry.RepoRef),
+			CheckoutPath: filepath.Clean(entry.CachedCheckout),
+		})
+	}
+}
+
+func hasTrustedCacheRef(cache WorkspaceCache, ref string) bool {
+	ref = normalizeRepoRef(ref)
+	for _, entry := range cache.Trusted {
+		if normalizeRepoRef(entry.Ref) == ref {
+			return true
+		}
+	}
+	return false
+}
+
+func hasExternalCacheRef(cache WorkspaceCache, ref string) bool {
+	ref = normalizeRepoRef(ref)
+	for _, entry := range cache.External {
+		if normalizeRepoRef(entry.Ref) == ref {
+			return true
+		}
+	}
+	return false
+}
+
+func mustWorkspaceRelativePath(primaryRoot string, targetPath string) string {
+	rel, err := filepath.Rel(primaryRoot, filepath.Clean(targetPath))
+	if err != nil {
+		return filepath.ToSlash(filepath.Clean(targetPath))
+	}
+	return filepath.ToSlash(rel)
+}
+
+func validateWorkspaceManifest(manifest WorkspaceManifest) error {
+	if manifest.SchemaVersion != manifestVersion {
+		return fmt.Errorf("unsupported workspace manifest schema_version %d", manifest.SchemaVersion)
+	}
+	seenTrusted := map[string]struct{}{}
+	seenExternal := map[string]struct{}{}
+	seenPaths := map[string]string{}
+	for _, entry := range manifest.Trusted {
+		ref := normalizeRepoRef(entry.Ref)
+		if ref == "" {
+			return fmt.Errorf("trusted manifest entry has empty ref")
+		}
+		if _, ok := seenTrusted[ref]; ok {
+			return fmt.Errorf("duplicate trusted ref %s", entry.Ref)
+		}
+		seenTrusted[ref] = struct{}{}
+		if err := validateManifestRelativePath(entry.Path, "trusted "+entry.Ref); err != nil {
+			return err
+		}
+		clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(entry.Path)))
+		if previous := seenPaths[clean]; previous != "" {
+			return fmt.Errorf("manifest path %s collides between %s and trusted %s", clean, previous, entry.Ref)
+		}
+		seenPaths[clean] = "trusted " + entry.Ref
+	}
+	for _, entry := range manifest.External {
+		ref := normalizeRepoRef(entry.Ref)
+		if ref == "" {
+			return fmt.Errorf("external manifest entry has empty ref")
+		}
+		if _, ok := seenExternal[ref]; ok {
+			return fmt.Errorf("duplicate external ref %s", entry.Ref)
+		}
+		seenExternal[ref] = struct{}{}
+	}
+	seenWorktrees := map[string]struct{}{}
+	for _, entry := range manifest.Worktrees {
+		of := normalizeRepoRef(entry.Of)
+		if of == "" {
+			return fmt.Errorf("worktree manifest entry has empty of")
+		}
+		if _, ok := seenTrusted[of]; !ok {
+			return fmt.Errorf("worktree %s/%s references missing trusted ref", entry.Of, entry.Branch)
+		}
+		branch := strings.TrimSpace(entry.Branch)
+		if branch == "" {
+			return fmt.Errorf("worktree manifest entry for %s has empty branch", entry.Of)
+		}
+		if err := validateManifestRelativePath(entry.Path, "worktree "+entry.Of+"/"+branch); err != nil {
+			return err
+		}
+		key := of + "\x00" + branch
+		if _, ok := seenWorktrees[key]; ok {
+			return fmt.Errorf("duplicate worktree branch %q for %s", entry.Branch, entry.Of)
+		}
+		seenWorktrees[key] = struct{}{}
+		clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(entry.Path)))
+		if previous := seenPaths[clean]; previous != "" {
+			return fmt.Errorf("manifest path %s collides between %s and worktree %s/%s", clean, previous, entry.Of, entry.Branch)
+		}
+		seenPaths[clean] = "worktree " + entry.Of + "/" + entry.Branch
+	}
+	return nil
+}
+
+func validateWorkspaceCache(cache WorkspaceCache) error {
+	if err := validateWorkspaceCacheShape(cache); err != nil {
+		return err
+	}
+	for _, entry := range cache.Trusted {
+		if !isSupportedAttachmentBackend(entry.Backend) {
+			return fmt.Errorf("unsupported trusted cache backend %q for %s", entry.Backend, entry.Ref)
+		}
+	}
+	return nil
+}
+
+func validateWorkspaceCacheShape(cache WorkspaceCache) error {
+	if cache.SchemaVersion != manifestVersion {
+		return fmt.Errorf("unsupported workspace cache schema_version %d", cache.SchemaVersion)
+	}
+	seenTrusted := map[string]struct{}{}
+	for _, entry := range cache.Trusted {
+		ref := normalizeRepoRef(entry.Ref)
+		if ref == "" {
+			return fmt.Errorf("trusted cache entry has empty ref")
+		}
+		if _, ok := seenTrusted[ref]; ok {
+			return fmt.Errorf("duplicate trusted cache ref %s", entry.Ref)
+		}
+		seenTrusted[ref] = struct{}{}
+		if strings.TrimSpace(entry.CheckoutPath) == "" {
+			return fmt.Errorf("trusted cache entry %s has empty checkout_path", entry.Ref)
+		}
+	}
+	seenExternal := map[string]struct{}{}
+	for _, entry := range cache.External {
+		ref := normalizeRepoRef(entry.Ref)
+		if ref == "" {
+			return fmt.Errorf("external cache entry has empty ref")
+		}
+		if _, ok := seenExternal[ref]; ok {
+			return fmt.Errorf("duplicate external cache ref %s", entry.Ref)
+		}
+		seenExternal[ref] = struct{}{}
+		if strings.TrimSpace(entry.CheckoutPath) == "" {
+			return fmt.Errorf("external cache entry %s has empty checkout_path", entry.Ref)
+		}
+	}
+	return nil
+}
+
+func validateManifestRelativePath(path string, label string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("%s path is empty", label)
+	}
+	clean := filepath.Clean(filepath.FromSlash(path))
+	if filepath.IsAbs(path) || filepath.IsAbs(clean) {
+		return fmt.Errorf("%s path %s must be workspace-relative", label, path)
+	}
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("%s path %s must stay inside the workspace", label, path)
+	}
+	return nil
+}
+
+func sortWorkspaceManifest(manifest *WorkspaceManifest) {
+	sort.Slice(manifest.Trusted, func(i, j int) bool {
+		return manifest.Trusted[i].Ref < manifest.Trusted[j].Ref
+	})
+	sort.Slice(manifest.External, func(i, j int) bool {
+		return manifest.External[i].Ref < manifest.External[j].Ref
+	})
+	sort.Slice(manifest.Worktrees, func(i, j int) bool {
+		if manifest.Worktrees[i].Of != manifest.Worktrees[j].Of {
+			return manifest.Worktrees[i].Of < manifest.Worktrees[j].Of
+		}
+		if manifest.Worktrees[i].Branch != manifest.Worktrees[j].Branch {
+			return manifest.Worktrees[i].Branch < manifest.Worktrees[j].Branch
+		}
+		return manifest.Worktrees[i].Path < manifest.Worktrees[j].Path
+	})
+}
+
+func sortWorkspaceCache(cache *WorkspaceCache) {
+	sort.Slice(cache.Trusted, func(i, j int) bool {
+		return cache.Trusted[i].Ref < cache.Trusted[j].Ref
+	})
+	sort.Slice(cache.External, func(i, j int) bool {
+		return cache.External[i].Ref < cache.External[j].Ref
+	})
 }
 
 func normalizeManifest(manifest *Manifest) error {
@@ -196,7 +657,7 @@ func (m *Manifest) Upsert(entry Entry) {
 
 	replaced := false
 	for i := range *target {
-		if (*target)[i].CheckoutPath == entry.CheckoutPath {
+		if normalizeRepoRef((*target)[i].RepoRef) == normalizeRepoRef(entry.RepoRef) || (*target)[i].CheckoutPath == entry.CheckoutPath {
 			(*target)[i] = entry
 			replaced = true
 			break
@@ -266,8 +727,16 @@ func sortManagedWorktrees(entries []ManagedWorktreeEntry) {
 
 func removeEntry(entries []Entry, target Entry) []Entry {
 	filtered := entries[:0]
+	targetRef := normalizeRepoRef(target.RepoRef)
+	targetCheckoutPath := strings.TrimSpace(target.CheckoutPath)
+	if targetCheckoutPath != "" {
+		targetCheckoutPath = filepath.Clean(targetCheckoutPath)
+	}
 	for _, entry := range entries {
-		if entry.CheckoutPath == target.CheckoutPath {
+		if targetRef != "" && normalizeRepoRef(entry.RepoRef) == targetRef {
+			continue
+		}
+		if targetRef == "" && targetCheckoutPath != "" && strings.TrimSpace(entry.CheckoutPath) != "" && filepath.Clean(entry.CheckoutPath) == targetCheckoutPath {
 			continue
 		}
 		filtered = append(filtered, entry)
@@ -346,6 +815,22 @@ func resolveManagedWorktreeEntry(manifest Manifest, ref string) (ManagedWorktree
 }
 
 func hydrateManifestRepo(entry Entry, runner Runner) Repo {
+	if strings.TrimSpace(entry.CheckoutPath) == "" {
+		repo := Repo{
+			LocalName:  repoNameFromRef(entry.RepoRef),
+			Name:       repoNameFromRef(entry.RepoRef),
+			TrustClass: entry.TrustClass,
+		}
+		if owner, name, ok := parseGitHubSlug(entry.RepoRef); ok {
+			repo.Slug = owner + "/" + name
+			repo.Name = name
+			repo.LocalName = name
+		}
+		if _, _, branch, ok := splitSlugWithBranch(entry.RepoRef); ok {
+			repo.Branch = branch
+		}
+		return repo
+	}
 	repo := hydrateRepo(buildRepoWithoutOrigin(entry.CheckoutPath, entry.TrustClass), runner)
 	if repo.Slug == "" {
 		if owner, name, ok := parseGitHubSlug(entry.RepoRef); ok {

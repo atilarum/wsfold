@@ -71,13 +71,24 @@ func TestExternalWorktreeRemovalInventoryClassifiesSafetyRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load manifest: %v", err)
 	}
+	primaryMount := filepath.Join(h.Workspace, "service")
+	if err := os.Symlink(primary, primaryMount); err != nil {
+		t.Fatalf("create primary symlink: %v", err)
+	}
+	manifest.Trusted = append(manifest.Trusted, Entry{
+		RepoRef:      "acme/service",
+		CheckoutPath: primary,
+		TrustClass:   TrustClassTrusted,
+		Backend:      AttachmentBackendSymlink,
+		MountPath:    primaryMount,
+	})
 	manifest.ManagedWorktrees = append(manifest.ManagedWorktrees, ManagedWorktreeEntry{
 		RepoRef:             "acme/service/managed-branch",
 		Branch:              "managed-branch",
 		WorkspacePath:       managed,
 		PrimaryRepoRef:      "acme/service",
 		PrimaryCheckoutPath: primary,
-		PrimaryMountPath:    primary,
+		PrimaryMountPath:    primaryMount,
 		ControlMode:         WorktreeControlWorkspaceMountedPrimary,
 		Owner:               ManagedWorktreeOwnerWSFold,
 		CreationSource:      "test",
@@ -87,7 +98,7 @@ func TestExternalWorktreeRemovalInventoryClassifiesSafetyRows(t *testing.T) {
 		WorkspacePath:       legacy,
 		PrimaryRepoRef:      "acme/service",
 		PrimaryCheckoutPath: primary,
-		PrimaryMountPath:    primary,
+		PrimaryMountPath:    primaryMount,
 		ControlMode:         WorktreeControlWorkspaceMountedPrimary,
 		Owner:               ManagedWorktreeOwnerWSFold,
 		CreationSource:      "legacy-test",
@@ -109,7 +120,7 @@ func TestExternalWorktreeRemovalInventoryClassifiesSafetyRows(t *testing.T) {
 	assertRow(t, inventory.Rows, locked, ExternalWorktreeBlocked, false)
 	assertRow(t, inventory.Rows, spacePath, ExternalWorktreeExternal, true)
 	assertRow(t, inventory.Rows, stale, ExternalWorktreeMissingPrunable, true)
-	assertRow(t, inventory.Rows, legacy, ExternalWorktreeLegacyAttached, false)
+	assertRow(t, inventory.Rows, legacy, ExternalWorktreeBlocked, false)
 	unmanagedRow := assertRow(t, inventory.Rows, unmanagedWorkspace, ExternalWorktreeBlocked, false)
 	if !strings.Contains(unmanagedRow.Reason, "active workspace") {
 		t.Fatalf("unmanaged workspace row should explain active workspace block, got %q", unmanagedRow.Reason)

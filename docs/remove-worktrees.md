@@ -8,7 +8,7 @@ Run it from any subdirectory of an initialized WSFold workspace:
 wsfold remove-worktrees
 ```
 
-The command opens the same picker style used by other WSFold commands. It starts in single-select mode, `Space` enters multi-select mode, and `Enter` submits the selected rows. WSFold then prints a confirmation summary before changing Git or the filesystem. Cancelling the confirmation leaves worktree directories, Git metadata, branches, the manifest, and the generated workspace file unchanged.
+The command opens the same picker style used by other WSFold commands. It starts in single-select mode, `Space` enters multi-select mode, and `Enter` submits the selected rows. WSFold then prints a confirmation summary before changing Git or the filesystem. Cancelling the confirmation leaves worktree directories, Git metadata, branches, `wsfold.yaml`, `.wsfold/cache.yaml`, and the generated workspace file unchanged.
 
 ## What Can Be Removed
 
@@ -24,9 +24,8 @@ Some linked worktree rows stay visible so the reason is clear, but they are not 
 - Dirty worktrees are blocked when they have staged, unstaged, or untracked changes.
 - Detached-HEAD worktrees are blocked in this version.
 - Locked worktrees are blocked in this version.
-- Legacy managed rows are protected until they can be handled by a dedicated migration or recovery flow.
 - Ambiguous rows are blocked when WSFold cannot safely distinguish inventory entries.
-- Unmanaged worktrees inside the active workspace are blocked unless the current manifest proves WSFold ownership.
+- Unmanaged worktrees inside the active workspace are blocked unless `wsfold.yaml` proves WSFold ownership.
 
 Before removal, WSFold rebuilds the inventory and revalidates every selected row by its opaque row ID. If a selected row became dirty, detached, locked, missing, ambiguous, or otherwise unsafe after the picker opened, WSFold skips it instead of removing it.
 
@@ -36,4 +35,4 @@ Use `wsfold worktree` to create a new workspace-local managed worktree from a tr
 
 Use `wsfold dismiss` to remove a repository or current-workspace managed worktree from the active workspace composition.
 
-Use `wsfold remove-worktrees` to clean up external Git worktrees that Git already knows about through trusted primary checkout metadata, plus selected stale metadata rows. It does not adopt, move, claim, stash, force remove, unlock, delete branches, or edit the current workspace manifest.
+Use `wsfold remove-worktrees` to clean up external Git worktrees that Git already knows about through trusted primary checkout metadata, plus selected stale metadata rows. It does not adopt, move, claim, stash, force remove, unlock, delete branches, or edit the current workspace intent/cache files.

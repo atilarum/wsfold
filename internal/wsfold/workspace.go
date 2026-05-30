@@ -107,6 +107,9 @@ func workspaceFolders(manifest Manifest) ([]workspaceFolder, error) {
 		})
 	}
 	for _, entry := range manifest.External {
+		if entry.CheckoutPath == "" {
+			continue
+		}
 		relativePath, err := workspaceRelativePath(manifest.PrimaryRoot, entry.CheckoutPath)
 		if err != nil {
 			return nil, err

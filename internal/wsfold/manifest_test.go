@@ -1,6 +1,7 @@
 package wsfold
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,10 +47,24 @@ func TestManifestRoundTripMatchesGolden(t *testing.T) {
 		t.Fatalf("read golden: %v", err)
 	}
 
-	expected := string(want)
-	expected = strings.ReplaceAll(expected, "{{PRIMARY_ROOT}}", root)
-	if string(got) != expected {
-		t.Fatalf("manifest mismatch\nwant:\n%s\ngot:\n%s", expected, string(got))
+	if string(got) != string(want) {
+		t.Fatalf("manifest mismatch\nwant:\n%s\ngot:\n%s", string(want), string(got))
+	}
+	cache, err := os.ReadFile(cachePath(root))
+	if err != nil {
+		t.Fatalf("read cache: %v", err)
+	}
+	for _, snippet := range []string{
+		"schema_version: 1",
+		"ref: acme/service",
+		"checkout_path: /trusted/acme/service",
+		"backend: symlink",
+		"ref: legacy/tool",
+		"checkout_path: /external/legacy/tool",
+	} {
+		if !strings.Contains(string(cache), snippet) {
+			t.Fatalf("cache missing %q:\n%s", snippet, string(cache))
+		}
 	}
 
 	loaded, err := loadManifest(root)
@@ -61,22 +76,15 @@ func TestManifestRoundTripMatchesGolden(t *testing.T) {
 	}
 }
 
-func TestManifestNormalizesLegacyTrustedBackend(t *testing.T) {
+func TestManifestDefaultsMissingCachedTrustedBackend(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	text := `version: 1
-primary_root: ` + root + `
+	text := `schema_version: 1
 trusted:
-    - repo_ref: acme/service
-      checkout_path: /trusted/acme/service
-      trust_class: trusted
-      mount_path: ` + filepath.Join(root, "service") + `
-external: []
+    - ref: acme/service
+      path: service
 `
-	if err := os.MkdirAll(filepath.Dir(manifestPath(root)), 0o755); err != nil {
-		t.Fatalf("mkdir manifest dir: %v", err)
-	}
 	if err := os.WriteFile(manifestPath(root), []byte(text), 0o644); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
@@ -86,37 +94,243 @@ external: []
 		t.Fatalf("loadManifest returned error: %v", err)
 	}
 	if got := manifest.Trusted[0].Backend; got != AttachmentBackendSymlink {
-		t.Fatalf("expected legacy trusted backend to normalize to symlink, got %q", got)
+		t.Fatalf("expected missing cache backend to normalize to symlink, got %q", got)
 	}
 }
 
-func TestManifestRejectsUnsupportedTrustedBackend(t *testing.T) {
+func TestManifestReportsUnsupportedCachedTrustedBackendOnEntry(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	text := `version: 1
-primary_root: ` + root + `
+	text := `schema_version: 1
 trusted:
-    - repo_ref: acme/service
-      checkout_path: /trusted/acme/service
-      trust_class: trusted
-      backend: made-up
-      mount_path: ` + filepath.Join(root, "service") + `
-external: []
+    - ref: acme/service
+      path: service
 `
-	if err := os.MkdirAll(filepath.Dir(manifestPath(root)), 0o755); err != nil {
-		t.Fatalf("mkdir manifest dir: %v", err)
-	}
 	if err := os.WriteFile(manifestPath(root), []byte(text), 0o644); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
+	cacheText := `schema_version: 1
+trusted:
+    - ref: acme/service
+      checkout_path: /trusted/acme/service
+      backend: made-up
+`
+	if err := os.MkdirAll(filepath.Dir(cachePath(root)), 0o755); err != nil {
+		t.Fatalf("mkdir cache dir: %v", err)
+	}
+	if err := os.WriteFile(cachePath(root), []byte(cacheText), 0o644); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
 
-	err := func() error {
-		_, err := loadManifest(root)
-		return err
-	}()
-	if err == nil || !strings.Contains(err.Error(), `unsupported trusted attachment backend "made-up"`) {
-		t.Fatalf("expected unsupported backend error, got %v", err)
+	manifest, err := loadManifest(root)
+	if err != nil {
+		t.Fatalf("loadManifest returned error: %v", err)
+	}
+	if len(manifest.Trusted) != 1 {
+		t.Fatalf("expected one trusted entry, got %d", len(manifest.Trusted))
+	}
+	entry := manifest.Trusted[0]
+	if entry.Backend != AttachmentBackendSymlink {
+		t.Fatalf("unsupported cached backend should use a safe runtime backend, got %q", entry.Backend)
+	}
+	if !strings.Contains(entry.ResolutionDetail, "trusted cache backend made-up is not supported") {
+		t.Fatalf("expected unsupported backend diagnostic, got %q", entry.ResolutionDetail)
+	}
+	if err := saveManifest(root, manifest); err != nil {
+		t.Fatalf("saveManifest returned error: %v", err)
+	}
+	cache, err := os.ReadFile(cachePath(root))
+	if err != nil {
+		t.Fatalf("read cache: %v", err)
+	}
+	for _, snippet := range []string{
+		"ref: acme/service",
+		"checkout_path: /trusted/acme/service",
+		"backend: made-up",
+	} {
+		if !strings.Contains(string(cache), snippet) {
+			t.Fatalf("invalid cached row should be preserved with %q:\n%s", snippet, string(cache))
+		}
+	}
+}
+
+func TestManifestRejectsUnsupportedCacheSchemaVersion(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.WriteFile(manifestPath(root), []byte(`schema_version: 1
+trusted:
+    - ref: acme/service
+      path: service
+`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(cachePath(root)), 0o755); err != nil {
+		t.Fatalf("mkdir cache dir: %v", err)
+	}
+	if err := os.WriteFile(cachePath(root), []byte(`schema_version: 99
+trusted:
+    - ref: acme/service
+      checkout_path: /trusted/acme/service
+      backend: symlink
+`), 0o644); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+
+	_, err := loadManifest(root)
+	if err == nil || !strings.Contains(err.Error(), "unsupported workspace cache schema_version 99") {
+		t.Fatalf("expected unsupported cache schema error, got %v", err)
+	}
+}
+
+func TestManifestRejectsMalformedCacheRowsOnLoad(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		cache   string
+		wantErr string
+	}{
+		"duplicate trusted ref": {
+			cache: `schema_version: 1
+trusted:
+    - ref: acme/service
+      checkout_path: /trusted/acme/service-a
+      backend: symlink
+    - ref: acme/service
+      checkout_path: /trusted/acme/service-b
+      backend: symlink
+`,
+			wantErr: "duplicate trusted cache ref acme/service",
+		},
+		"duplicate external ref": {
+			cache: `schema_version: 1
+external:
+    - ref: github/tool
+      checkout_path: /external/github/tool-a
+    - ref: github/tool
+      checkout_path: /external/github/tool-b
+`,
+			wantErr: "duplicate external cache ref github/tool",
+		},
+		"empty trusted ref": {
+			cache: `schema_version: 1
+trusted:
+    - ref: ""
+      checkout_path: /trusted/acme/service
+      backend: symlink
+`,
+			wantErr: "trusted cache entry has empty ref",
+		},
+		"empty external ref": {
+			cache: `schema_version: 1
+external:
+    - ref: ""
+      checkout_path: /external/github/tool
+`,
+			wantErr: "external cache entry has empty ref",
+		},
+		"empty trusted checkout": {
+			cache: `schema_version: 1
+trusted:
+    - ref: acme/service
+      checkout_path: ""
+      backend: symlink
+`,
+			wantErr: "trusted cache entry acme/service has empty checkout_path",
+		},
+		"empty external checkout": {
+			cache: `schema_version: 1
+external:
+    - ref: github/tool
+      checkout_path: ""
+`,
+			wantErr: "external cache entry github/tool has empty checkout_path",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Dir(cachePath(root)), 0o755); err != nil {
+				t.Fatalf("mkdir cache dir: %v", err)
+			}
+			if err := os.WriteFile(cachePath(root), []byte(tc.cache), 0o644); err != nil {
+				t.Fatalf("write cache: %v", err)
+			}
+
+			_, err := loadWorkspaceCache(root)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected cache error %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestManifestRemoveDoesNotTreatEmptyCheckoutPathAsWildcard(t *testing.T) {
+	t.Parallel()
+
+	manifest := Manifest{
+		Trusted: []Entry{
+			{RepoRef: "acme/service", TrustClass: TrustClassTrusted},
+			{RepoRef: "acme/worker", TrustClass: TrustClassTrusted},
+		},
+		External: []Entry{
+			{RepoRef: "github/tool", TrustClass: TrustClassExternal},
+			{RepoRef: "github/archive", TrustClass: TrustClassExternal},
+		},
+	}
+
+	manifest.Remove(Entry{RepoRef: "acme/service", TrustClass: TrustClassTrusted})
+	if len(manifest.Trusted) != 1 || manifest.Trusted[0].RepoRef != "acme/worker" {
+		t.Fatalf("trusted remove should only remove the selected empty-checkout ref, got %#v", manifest.Trusted)
+	}
+
+	manifest.Remove(Entry{RepoRef: "github/tool", TrustClass: TrustClassExternal})
+	if len(manifest.External) != 1 || manifest.External[0].RepoRef != "github/archive" {
+		t.Fatalf("external remove should only remove the selected empty-checkout ref, got %#v", manifest.External)
+	}
+}
+
+func TestResolveManifestEntryDoesNotHydrateEmptyCheckoutFromCurrentDirectory(t *testing.T) {
+	t.Parallel()
+
+	manifest := Manifest{
+		External: []Entry{
+			{RepoRef: "github/archive", TrustClass: TrustClassExternal},
+		},
+	}
+	calledCurrentDir := false
+	runner := Runner{
+		ExecCommand: func(name string, dir string, env []string, args ...string) (string, error) {
+			if dir == "." {
+				calledCurrentDir = true
+				if len(args) >= 3 && args[0] == "config" && args[1] == "--get" && args[2] == "remote.origin.url" {
+					return "https://github.com/github/tool.git", nil
+				}
+				return "", nil
+			}
+			return "", fmt.Errorf("unexpected command %s in %s", name, dir)
+		},
+	}
+
+	if entry, ok, err := resolveManifestEntry(manifest, "tool", runner); err != nil {
+		t.Fatalf("resolveManifestEntry returned error: %v", err)
+	} else if ok {
+		t.Fatalf("empty-checkout entry should not match current-directory Git metadata: %#v", entry)
+	}
+	if calledCurrentDir {
+		t.Fatal("empty-checkout manifest entry should not be hydrated from the current directory")
+	}
+
+	entry, ok, err := resolveManifestEntry(manifest, "archive", runner)
+	if err != nil {
+		t.Fatalf("resolveManifestEntry returned error: %v", err)
+	}
+	if !ok || entry.RepoRef != "github/archive" {
+		t.Fatalf("empty-checkout entry should still match its declared short ref, got ok=%v entry=%#v", ok, entry)
 	}
 }
 

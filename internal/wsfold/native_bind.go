@@ -142,7 +142,7 @@ func dismissNativeBind(runner Runner, entry Entry) error {
 			if isBusyUnmountErrorText(err) {
 				return &busyUnmountError{Backend: AttachmentBackendLinuxNativeBind, MountPath: entry.MountPath, Err: err}
 			}
-			return fmt.Errorf("sudo umount %s failed; manifest state was preserved for retry: %w", entry.MountPath, err)
+			return fmt.Errorf("sudo umount %s failed; workspace intent and cache state were preserved for retry: %w", entry.MountPath, err)
 		}
 	}
 	if err := removeNativeBindResidue(entry.MountPath); err != nil {

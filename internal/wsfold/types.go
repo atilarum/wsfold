@@ -59,11 +59,16 @@ func (r Repo) DisplayRef() string {
 }
 
 type Entry struct {
-	RepoRef      string            `yaml:"repo_ref" json:"repo_ref"`
-	CheckoutPath string            `yaml:"checkout_path" json:"checkout_path"`
-	TrustClass   TrustClass        `yaml:"trust_class" json:"trust_class"`
-	Backend      AttachmentBackend `yaml:"backend,omitempty" json:"backend,omitempty"`
-	MountPath    string            `yaml:"mount_path,omitempty" json:"mount_path,omitempty"`
+	RepoRef          string            `yaml:"repo_ref" json:"repo_ref"`
+	CheckoutPath     string            `yaml:"checkout_path" json:"checkout_path"`
+	TrustClass       TrustClass        `yaml:"trust_class" json:"trust_class"`
+	Backend          AttachmentBackend `yaml:"backend,omitempty" json:"backend,omitempty"`
+	MountPath        string            `yaml:"mount_path,omitempty" json:"mount_path,omitempty"`
+	ResolutionDetail string            `yaml:"-" json:"-"`
+	CacheInferred    bool              `yaml:"-" json:"-"`
+	CachePresent     bool              `yaml:"-" json:"-"`
+	CachedCheckout   string            `yaml:"-" json:"-"`
+	CachedBackend    AttachmentBackend `yaml:"-" json:"-"`
 }
 
 func (e Entry) Key() string {
@@ -85,4 +90,43 @@ type ManagedWorktreeEntry struct {
 
 func (e ManagedWorktreeEntry) Key() string {
 	return fmt.Sprintf("managed-worktree|%s|%s", e.PrimaryRepoRef, e.WorkspacePath)
+}
+
+type WorkspaceManifest struct {
+	SchemaVersion int                     `yaml:"schema_version"`
+	Trusted       []TrustedManifestEntry  `yaml:"trusted,omitempty"`
+	External      []ExternalManifestEntry `yaml:"external,omitempty"`
+	Worktrees     []WorktreeManifestEntry `yaml:"worktrees,omitempty"`
+}
+
+type TrustedManifestEntry struct {
+	Ref  string `yaml:"ref"`
+	Path string `yaml:"path"`
+}
+
+type ExternalManifestEntry struct {
+	Ref string `yaml:"ref"`
+}
+
+type WorktreeManifestEntry struct {
+	Of     string `yaml:"of"`
+	Branch string `yaml:"branch"`
+	Path   string `yaml:"path"`
+}
+
+type WorkspaceCache struct {
+	SchemaVersion int                  `yaml:"schema_version"`
+	Trusted       []TrustedCacheEntry  `yaml:"trusted,omitempty"`
+	External      []ExternalCacheEntry `yaml:"external,omitempty"`
+}
+
+type TrustedCacheEntry struct {
+	Ref          string            `yaml:"ref"`
+	CheckoutPath string            `yaml:"checkout_path"`
+	Backend      AttachmentBackend `yaml:"backend"`
+}
+
+type ExternalCacheEntry struct {
+	Ref          string `yaml:"ref"`
+	CheckoutPath string `yaml:"checkout_path"`
 }
