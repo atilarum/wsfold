@@ -112,8 +112,8 @@ func dismissFuseBind(runner Runner, entry Entry) error {
 			return fmt.Errorf("%s target %s is an active mountpoint but does not look like the expected bindfs FUSE attachment; inspect it manually before unmounting", AttachmentBackendLinuxFuseBind, entry.MountPath)
 		}
 		if _, err := runner.Command("", "fusermount3", "-u", entry.MountPath); err != nil {
-			if strings.Contains(strings.ToLower(err.Error()), "busy") {
-				return fmt.Errorf("FUSE bind mount %s is busy; close files or terminals using it and retry dismiss with fusermount3 -u %s: %w", entry.MountPath, entry.MountPath, err)
+			if isBusyUnmountErrorText(err) {
+				return &busyUnmountError{Backend: AttachmentBackendLinuxFuseBind, MountPath: entry.MountPath, Err: err}
 			}
 			return fmt.Errorf("fusermount3 -u %s failed; manifest state was preserved for retry: %w", entry.MountPath, err)
 		}

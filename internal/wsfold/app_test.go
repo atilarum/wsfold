@@ -2,6 +2,7 @@ package wsfold
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1416,6 +1417,157 @@ func TestDismissLinuxNativeBindRoutesToNativeCleanup(t *testing.T) {
 	}
 	if _, err := os.Stat(repoPath); err != nil {
 		t.Fatalf("source checkout should remain: %v", err)
+	}
+}
+
+func TestDismissBusyBindMountGuidanceClassifiesCurrentDirectory(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		backend       AttachmentBackend
+		cwd           func(*testutil.Harness, string) string
+		wantInside    bool
+		wantRef       string
+		wantNoSnippet string
+	}{
+		{
+			name:    "native cwd equal mount path",
+			backend: AttachmentBackendLinuxNativeBind,
+			cwd: func(_ *testutil.Harness, mountPath string) string {
+				return mountPath
+			},
+			wantInside:    true,
+			wantRef:       "service",
+			wantNoSnippet: "Close terminals or editors",
+		},
+		{
+			name:    "native cwd nested under mount path",
+			backend: AttachmentBackendLinuxNativeBind,
+			cwd: func(t *testutil.Harness, mountPath string) string {
+				nested := filepath.Join(mountPath, "cmd", "api")
+				if err := os.MkdirAll(nested, 0o755); err != nil {
+					t.T.Fatalf("mkdir nested cwd: %v", err)
+				}
+				return nested
+			},
+			wantInside:    true,
+			wantRef:       "service",
+			wantNoSnippet: "Close terminals or editors",
+		},
+		{
+			name:    "native sibling path is outside mount",
+			backend: AttachmentBackendLinuxNativeBind,
+			cwd: func(t *testutil.Harness, _ string) string {
+				sibling := filepath.Join(t.Workspace, "service-subtask")
+				if err := os.MkdirAll(sibling, 0o755); err != nil {
+					t.T.Fatalf("mkdir sibling cwd: %v", err)
+				}
+				return sibling
+			},
+			wantRef:       "service",
+			wantNoSnippet: "running from inside",
+		},
+		{
+			name:    "fuse cwd outside mount",
+			backend: AttachmentBackendLinuxFuseBind,
+			cwd: func(t *testutil.Harness, _ string) string {
+				return t.Workspace
+			},
+			wantRef:       "service",
+			wantNoSnippet: "running from inside",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := testutil.NewHarness(t)
+			setEnv(t, h)
+			initWorkspace(t, h)
+
+			repoPath := filepath.Join(h.TrustedRoot, "service")
+			h.InitRepo(repoPath)
+			mountPath := filepath.Join(h.Workspace, "service")
+			if err := os.MkdirAll(mountPath, 0o755); err != nil {
+				t.Fatalf("mkdir mount path: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(mountPath, "kept.txt"), []byte("user data\n"), 0o644); err != nil {
+				t.Fatalf("write mount sentinel: %v", err)
+			}
+			entry := Entry{RepoRef: "acme/service", CheckoutPath: repoPath, TrustClass: TrustClassTrusted, Backend: tc.backend, MountPath: mountPath}
+			manifest := Manifest{Version: manifestVersion, PrimaryRoot: h.Workspace, Trusted: []Entry{entry}}
+			if err := saveManifest(h.Workspace, manifest); err != nil {
+				t.Fatalf("save manifest: %v", err)
+			}
+			if err := writeWorkspace(h.Workspace, Manifest{}, manifest, "."); err != nil {
+				t.Fatalf("write workspace: %v", err)
+			}
+			manifestBefore, err := os.ReadFile(manifestPath(h.Workspace))
+			if err != nil {
+				t.Fatalf("read manifest before: %v", err)
+			}
+			workspaceBefore, err := os.ReadFile(workspacePath(h.Workspace))
+			if err != nil {
+				t.Fatalf("read workspace before: %v", err)
+			}
+
+			oldNativeDismiss := nativeBindDismiss
+			oldFuseDismiss := fuseBindDismiss
+			nativeBindDismiss = func(_ Runner, got Entry) error {
+				return &busyUnmountError{Backend: AttachmentBackendLinuxNativeBind, MountPath: got.MountPath, Err: errors.New("target is busy")}
+			}
+			fuseBindDismiss = func(_ Runner, got Entry) error {
+				return &busyUnmountError{Backend: AttachmentBackendLinuxFuseBind, MountPath: got.MountPath, Err: errors.New("target is busy")}
+			}
+			t.Cleanup(func() {
+				nativeBindDismiss = oldNativeDismiss
+				fuseBindDismiss = oldFuseDismiss
+			})
+
+			err = NewApp().Dismiss(tc.cwd(h, mountPath), tc.wantRef)
+			if err == nil {
+				t.Fatal("expected busy dismiss error")
+			}
+			text := err.Error()
+			for _, snippet := range []string{
+				"bind mount " + mountPath + " is busy",
+				"Retry from the workspace root:",
+				"cd " + h.Workspace,
+				"wsfold dismiss " + tc.wantRef,
+			} {
+				if !strings.Contains(text, snippet) {
+					t.Fatalf("busy diagnostic missing %q:\n%s", snippet, text)
+				}
+			}
+			if tc.wantInside && !strings.Contains(text, "running from inside that mounted folder") {
+				t.Fatalf("expected inside-mount diagnostic, got:\n%s", text)
+			}
+			if !tc.wantInside && !strings.Contains(text, "Close terminals or editors using that folder") {
+				t.Fatalf("expected outside-mount diagnostic, got:\n%s", text)
+			}
+			for _, forbidden := range []string{tc.wantNoSnippet, "lsof", "fuser"} {
+				if forbidden != "" && strings.Contains(text, forbidden) {
+					t.Fatalf("busy diagnostic should not contain %q:\n%s", forbidden, text)
+				}
+			}
+
+			manifestAfter, err := os.ReadFile(manifestPath(h.Workspace))
+			if err != nil {
+				t.Fatalf("read manifest after: %v", err)
+			}
+			if string(manifestAfter) != string(manifestBefore) {
+				t.Fatalf("busy dismiss should preserve manifest\nbefore:\n%s\nafter:\n%s", manifestBefore, manifestAfter)
+			}
+			workspaceAfter, err := os.ReadFile(workspacePath(h.Workspace))
+			if err != nil {
+				t.Fatalf("read workspace after: %v", err)
+			}
+			if string(workspaceAfter) != string(workspaceBefore) {
+				t.Fatalf("busy dismiss should preserve workspace\nbefore:\n%s\nafter:\n%s", workspaceBefore, workspaceAfter)
+			}
+			if _, err := os.Stat(repoPath); err != nil {
+				t.Fatalf("source checkout should remain: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(mountPath, "kept.txt")); err != nil {
+				t.Fatalf("mount path should remain intact: %v", err)
+			}
+		})
 	}
 }
 

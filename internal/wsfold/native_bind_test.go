@@ -97,14 +97,24 @@ func TestNativeBindDismissActiveMountRunsUmountBeforeCleanup(t *testing.T) {
 }
 
 func TestNativeBindDismissPreservesStateOnBusyMount(t *testing.T) {
-	oldDismiss := nativeBindDismiss
-	nativeBindDismiss = func(Runner, Entry) error {
-		return errors.New("native bind mount /workspace/service is busy; close files or terminals using it and retry dismiss")
+	entry := Entry{RepoRef: "acme/service", CheckoutPath: "/trusted/service", TrustClass: TrustClassTrusted, Backend: AttachmentBackendLinuxNativeBind, MountPath: "/workspace/service"}
+	oldMountInfo := activeMountInfoFunc
+	activeMountInfoFunc = func() (map[string]mountPointInfo, error) {
+		return map[string]mountPointInfo{
+			filepath.Clean(entry.MountPath): {Path: entry.MountPath, FSType: "ext4", Source: "/dev/sda"},
+		}, nil
 	}
-	t.Cleanup(func() { nativeBindDismiss = oldDismiss })
+	t.Cleanup(func() { activeMountInfoFunc = oldMountInfo })
 
-	err := nativeBindDismiss(Runner{}, Entry{MountPath: "/workspace/service"})
-	if err == nil || !strings.Contains(err.Error(), "busy") {
-		t.Fatalf("expected busy mount diagnostic, got %v", err)
+	runner := Runner{ExecCommand: func(string, string, []string, ...string) (string, error) {
+		return "", errors.New("umount: /workspace/service: target is busy")
+	}}
+	err := dismissNativeBind(runner, entry)
+	busy, ok := asBusyUnmountError(err)
+	if !ok {
+		t.Fatalf("expected structured busy mount error, got %v", err)
+	}
+	if busy.Backend != AttachmentBackendLinuxNativeBind || busy.MountPath != entry.MountPath {
+		t.Fatalf("unexpected busy metadata: %#v", busy)
 	}
 }

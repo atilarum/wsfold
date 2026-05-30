@@ -88,6 +88,22 @@ func TestLinuxNativeBindLifecycle(t *testing.T) {
 	runProduct(t, mountPath, env, "git", "status", "--short")
 	runProduct(t, mountPath, env, "git", "rev-parse", "--git-dir")
 
+	busyOutput := runProductExpectError(t, mountPath, env, wsfold, "dismiss", "service")
+	for _, snippet := range []string{
+		"running from inside that mounted folder",
+		"cd " + workspace,
+		"wsfold dismiss service",
+	} {
+		if !strings.Contains(busyOutput, snippet) {
+			t.Fatalf("product: busy dismiss output missing %q\n%s", snippet, busyOutput)
+		}
+	}
+	if !isMountpoint(mountPath) {
+		t.Fatalf("product: busy dismiss should preserve active mountpoint: %s", mountPath)
+	}
+	assertFileContains(t, filepath.Join(workspace, ".wsfold", "manifest.yaml"), "backend: linux-native-bind")
+	assertFileContains(t, filepath.Join(workspace, "workspace.code-workspace"), `"path": "service"`)
+
 	runProduct(t, workspace, env, wsfold, "dismiss", "service")
 	if isMountpoint(mountPath) {
 		t.Fatalf("product: mountpoint remains active after dismiss: %s", mountPath)
@@ -177,6 +193,15 @@ func runProduct(t *testing.T, dir string, env []string, name string, args ...str
 	output, err := commandWithEnv(dir, env, name, args...)
 	if err != nil {
 		t.Fatalf("product: %s %s failed: %v\n%s", name, strings.Join(args, " "), err, output)
+	}
+	return output
+}
+
+func runProductExpectError(t *testing.T, dir string, env []string, name string, args ...string) string {
+	t.Helper()
+	output, err := commandWithEnv(dir, env, name, args...)
+	if err == nil {
+		t.Fatalf("product: %s %s unexpectedly succeeded\n%s", name, strings.Join(args, " "), output)
 	}
 	return output
 }

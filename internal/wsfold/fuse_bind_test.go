@@ -181,8 +181,13 @@ func TestFuseBindDismissClassifiesRecoveryFailures(t *testing.T) {
 	busyRunner := Runner{ExecCommand: func(string, string, []string, ...string) (string, error) {
 		return "", errors.New("device is busy")
 	}}
-	if err := dismissFuseBind(busyRunner, entry); err == nil || !strings.Contains(err.Error(), "busy") {
-		t.Fatalf("expected busy diagnostic, got %v", err)
+	err := dismissFuseBind(busyRunner, entry)
+	busy, ok := asBusyUnmountError(err)
+	if !ok {
+		t.Fatalf("expected structured busy diagnostic, got %v", err)
+	}
+	if busy.Backend != AttachmentBackendLinuxFuseBind || busy.MountPath != entry.MountPath {
+		t.Fatalf("unexpected busy metadata: %#v", busy)
 	}
 
 	activeMountInfoFunc = func() (map[string]mountPointInfo, error) {

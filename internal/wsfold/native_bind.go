@@ -139,8 +139,8 @@ func dismissNativeBind(runner Runner, entry Entry) error {
 	}
 	if mounted {
 		if _, err := runner.Command("", "sudo", "umount", entry.MountPath); err != nil {
-			if strings.Contains(strings.ToLower(err.Error()), "busy") {
-				return fmt.Errorf("native bind mount %s is busy; close files or terminals using it and retry dismiss: %w", entry.MountPath, err)
+			if isBusyUnmountErrorText(err) {
+				return &busyUnmountError{Backend: AttachmentBackendLinuxNativeBind, MountPath: entry.MountPath, Err: err}
 			}
 			return fmt.Errorf("sudo umount %s failed; manifest state was preserved for retry: %w", entry.MountPath, err)
 		}

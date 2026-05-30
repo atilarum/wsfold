@@ -53,6 +53,9 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(output, "`wsfold worktree` is trusted-only. It summons the primary repository first, then creates a managed worktree in the active workspace.") {
 		t.Fatalf("help output did not contain worktree command note: %q", output)
 	}
+	if !strings.Contains(output, "run `wsfold dismiss <repo-ref>` from the workspace root rather than from inside the mounted folder") {
+		t.Fatalf("help output did not contain bind dismiss cwd guidance: %q", output)
+	}
 	for _, snippet := range []string{
 		"WSFOLD_MOUNT_BACKEND=linux-fuse-bind",
 		"bindfs --no-allow-other",
@@ -77,6 +80,9 @@ func TestRunHelp(t *testing.T) {
 	}
 	if strings.Contains(output, "--privileged") {
 		t.Fatalf("help output should not recommend privileged containers: %q", output)
+	}
+	if strings.Contains(output, "lsof") || strings.Contains(output, "`fuser`") || strings.Contains(output, " fuser ") {
+		t.Fatalf("help output should not include process-inspection commands: %q", output)
 	}
 	if !strings.Contains(output, "Examples:") || !strings.Contains(output, `eval "$(wsfold completion zsh)"`) {
 		t.Fatalf("help output did not contain examples section: %q", output)
