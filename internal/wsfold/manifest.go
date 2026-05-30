@@ -36,10 +36,6 @@ func cachePath(primaryRoot string) string {
 	return filepath.Join(primaryRoot, ".wsfold", "cache.yaml")
 }
 
-func legacyManifestPath(primaryRoot string) string {
-	return filepath.Join(primaryRoot, ".wsfold", "manifest.yaml")
-}
-
 func loadManifest(primaryRoot string) (Manifest, error) {
 	workspaceManifest, err := loadWorkspaceManifest(primaryRoot)
 	if err != nil {

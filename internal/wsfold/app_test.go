@@ -2050,13 +2050,6 @@ func TestResolveWorkspaceRootRequiresWorkspaceManifest(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnv(t, h)
 
-	if err := os.MkdirAll(filepath.Join(h.Workspace, ".wsfold"), 0o755); err != nil {
-		t.Fatalf("mkdir metadata directory: %v", err)
-	}
-	if err := os.WriteFile(legacyManifestPath(h.Workspace), []byte("version: 1\n"), 0o644); err != nil {
-		t.Fatalf("write unrelated metadata file: %v", err)
-	}
-
 	_, err := resolveWorkspaceRoot(filepath.Join(h.Workspace, "subdir"))
 	if err == nil || !strings.Contains(err.Error(), "no wsfold.yaml workspace found") {
 		t.Fatalf("expected missing wsfold.yaml error, got %v", err)
