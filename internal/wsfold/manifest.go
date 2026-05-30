@@ -664,7 +664,7 @@ func requirePathInside(root string, path string, label string) error {
 
 func isSupportedAttachmentBackend(backend AttachmentBackend) bool {
 	switch backend {
-	case AttachmentBackendSymlink, AttachmentBackendLinuxNativeBind, AttachmentBackendLinuxFuseBind, AttachmentBackendMacOSFuseBind:
+	case AttachmentBackendSymlink, AttachmentBackendLinuxNativeBind, AttachmentBackendLinuxFuseBind:
 		return true
 	default:
 		return false

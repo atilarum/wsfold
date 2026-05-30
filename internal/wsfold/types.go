@@ -21,7 +21,6 @@ const (
 	AttachmentBackendSymlink         AttachmentBackend = "symlink"
 	AttachmentBackendLinuxNativeBind AttachmentBackend = "linux-native-bind"
 	AttachmentBackendLinuxFuseBind   AttachmentBackend = "linux-fuse-bind"
-	AttachmentBackendMacOSFuseBind   AttachmentBackend = "macos-fuse-bind"
 
 	WorktreeControlWorkspaceMountedPrimary WorktreeControlMode  = "workspace-mounted-primary"
 	ManagedWorktreeOwnerWSFold             ManagedWorktreeOwner = "wsfold"

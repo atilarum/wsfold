@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/tailscale/hujson"
 )
@@ -93,6 +94,9 @@ func workspaceFolders(manifest Manifest) ([]workspaceFolder, error) {
 		{Name: filepath.Base(manifest.PrimaryRoot), Path: "."},
 	}
 	for _, entry := range manifest.Trusted {
+		if strings.TrimSpace(entry.ResolutionDetail) != "" || strings.TrimSpace(entry.CheckoutPath) == "" {
+			continue
+		}
 		path := entry.MountPath
 		if path == "" {
 			return nil, fmt.Errorf("trusted attachment %q has empty mount_path", entry.RepoRef)

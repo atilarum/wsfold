@@ -438,7 +438,6 @@ func TestManifestPreservesSupportedTrustedBackends(t *testing.T) {
 			{RepoRef: "acme/a", CheckoutPath: "/trusted/a", TrustClass: TrustClassTrusted, Backend: AttachmentBackendSymlink, MountPath: filepath.Join(root, "a")},
 			{RepoRef: "acme/b", CheckoutPath: "/trusted/b", TrustClass: TrustClassTrusted, Backend: AttachmentBackendLinuxNativeBind, MountPath: filepath.Join(root, "b")},
 			{RepoRef: "acme/c", CheckoutPath: "/trusted/c", TrustClass: TrustClassTrusted, Backend: AttachmentBackendLinuxFuseBind, MountPath: filepath.Join(root, "c")},
-			{RepoRef: "acme/d", CheckoutPath: "/trusted/d", TrustClass: TrustClassTrusted, Backend: AttachmentBackendMacOSFuseBind, MountPath: filepath.Join(root, "d")},
 		},
 	}
 
@@ -453,7 +452,7 @@ func TestManifestPreservesSupportedTrustedBackends(t *testing.T) {
 	for _, entry := range loaded.Trusted {
 		got[entry.Backend] = true
 	}
-	for _, backend := range []AttachmentBackend{AttachmentBackendSymlink, AttachmentBackendLinuxNativeBind, AttachmentBackendLinuxFuseBind, AttachmentBackendMacOSFuseBind} {
+	for _, backend := range []AttachmentBackend{AttachmentBackendSymlink, AttachmentBackendLinuxNativeBind, AttachmentBackendLinuxFuseBind} {
 		if !got[backend] {
 			t.Fatalf("expected backend %s to be preserved, got %#v", backend, loaded.Trusted)
 		}

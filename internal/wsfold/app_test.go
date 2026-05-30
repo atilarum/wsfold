@@ -244,7 +244,7 @@ func TestSummonAllRecoversIndependentEntriesAndReportsInvalid(t *testing.T) {
 func TestSummonRejectsUnsupportedMountBackend(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnv(t, h)
-	t.Setenv("WSFOLD_MOUNT_BACKEND", "macos-fuse-bind")
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "future-bind")
 	initWorkspace(t, h)
 
 	repoPath := filepath.Join(h.TrustedRoot, "service")
@@ -252,7 +252,7 @@ func TestSummonRejectsUnsupportedMountBackend(t *testing.T) {
 	h.RunGit(repoPath, "remote", "add", "origin", "https://github.com/acme/service.git")
 
 	err := NewApp().Summon(h.Workspace, "service")
-	if err == nil || !strings.Contains(err.Error(), "not selectable yet") {
+	if err == nil || !strings.Contains(err.Error(), "unsupported WSFOLD_MOUNT_BACKEND") {
 		t.Fatalf("expected backend selection error, got %v", err)
 	}
 	manifest, loadErr := loadManifest(h.Workspace)
@@ -1584,21 +1584,19 @@ func TestDismissUnsupportedTrustedBackendFailsClosed(t *testing.T) {
 	repoPath := filepath.Join(h.TrustedRoot, "service")
 	h.InitRepo(repoPath)
 	mountPath := filepath.Join(h.Workspace, "service")
-	entry := Entry{RepoRef: "acme/service", CheckoutPath: repoPath, TrustClass: TrustClassTrusted, Backend: AttachmentBackendMacOSFuseBind, MountPath: mountPath}
-	if err := saveManifest(h.Workspace, Manifest{Version: manifestVersion, PrimaryRoot: h.Workspace, Trusted: []Entry{entry}}); err != nil {
-		t.Fatalf("save manifest: %v", err)
-	}
+	entry := Entry{RepoRef: "acme/service", CheckoutPath: repoPath, TrustClass: TrustClassTrusted, Backend: AttachmentBackend("future-bind"), MountPath: mountPath}
+	manifest := Manifest{Version: manifestVersion, PrimaryRoot: h.Workspace, Trusted: []Entry{entry}}
 
-	err := NewApp().Dismiss(h.Workspace, "acme/service")
+	err := NewApp().dismissRepoEntry(h.Workspace, h.Workspace, "acme/service", Config{}, manifest, entry)
 	if err == nil || !strings.Contains(err.Error(), "not supported by dismiss yet") {
 		t.Fatalf("expected unsupported backend dismiss error, got %v", err)
 	}
-	manifest, loadErr := loadManifest(h.Workspace)
+	loaded, loadErr := loadManifest(h.Workspace)
 	if loadErr != nil {
 		t.Fatalf("loadManifest returned error: %v", loadErr)
 	}
-	if len(manifest.Trusted) != 1 {
-		t.Fatalf("unsupported dismiss should preserve manifest entry, got %#v", manifest.Trusted)
+	if len(loaded.Trusted) != 0 {
+		t.Fatalf("unsupported in-memory dismiss should not write manifest entry, got %#v", loaded.Trusted)
 	}
 	if _, statErr := os.Stat(repoPath); statErr != nil {
 		t.Fatalf("source checkout should remain: %v", statErr)

@@ -12,8 +12,6 @@ Supported values for `WSFOLD_MOUNT_BACKEND` are:
 - `linux-fuse-bind` - Linux host backend using `bindfs --no-allow-other` and `fusermount3 -u`; when used inside Docker-style containers it needs `/dev/fuse` and `CAP_SYS_ADMIN`.
 - `linux-native-bind` - Linux devcontainer backend using `sudo mount --bind` and `sudo umount`.
 
-`macos-fuse-bind` is reserved for forward compatibility, but it is not a selectable backend yet.
-
 ## Devcontainer Setup
 
 The container must run with `CAP_SYS_ADMIN`. For Docker:

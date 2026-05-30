@@ -12,8 +12,6 @@ Supported values for `WSFOLD_MOUNT_BACKEND` are:
 - `linux-fuse-bind` - Linux host backend using `bindfs --no-allow-other` and `fusermount3 -u`.
 - `linux-native-bind` - Linux devcontainer backend using `sudo mount --bind` and `sudo umount`.
 
-`macos-fuse-bind` is reserved for forward compatibility, but it is not a selectable backend yet.
-
 ## Linux Host Setup
 
 Install FUSE3, `bindfs`, and `fusermount3` with your distribution package manager. The host must expose a usable `/dev/fuse` device to the user running WSFold.
