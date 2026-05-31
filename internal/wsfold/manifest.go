@@ -190,12 +190,6 @@ func runtimeManifestFromWorkspace(primaryRoot string, workspaceManifest Workspac
 					cacheEntry.Ref = entry.Ref
 					cacheEntry.CheckoutPath = repo.CheckoutPath
 					cacheInferred = true
-					if backend, err := selectedTrustedBackend(); err == nil {
-						cacheEntry.Backend = backend
-					} else {
-						resolutionDetail = err.Error()
-						cacheEntry.Backend = AttachmentBackendSymlink
-					}
 				} else if err != nil {
 					resolutionDetail = fmt.Sprintf("cache missing for %s; %v", entry.Ref, err)
 				}

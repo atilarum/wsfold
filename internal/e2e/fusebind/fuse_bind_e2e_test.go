@@ -118,6 +118,50 @@ func TestLinuxFuseBindLifecycle(t *testing.T) {
 		t.Fatalf("product: source checkout was deleted by dismiss: %v", err)
 	}
 	assertFileNotContains(t, filepath.Join(workspace, "workspace.code-workspace"), `"path": "service"`)
+
+	for _, tc := range []struct {
+		name       string
+		backendEnv string
+	}{
+		{name: "unset", backendEnv: ""},
+		{name: "explicit-auto", backendEnv: "auto"},
+	} {
+		t.Run("auto selects FUSE bind "+tc.name, func(t *testing.T) {
+			autoRoot := t.TempDir()
+			autoWorkspace := filepath.Join(autoRoot, "workspace")
+			autoTrusted := filepath.Join(autoRoot, "trusted")
+			autoExternal := filepath.Join(autoRoot, "external")
+			autoSource := filepath.Join(autoTrusted, "service")
+			autoMountPath := filepath.Join(autoWorkspace, "service")
+			for _, dir := range []string{autoWorkspace, autoTrusted, autoExternal} {
+				mkdirAll(t, dir)
+			}
+			initRepo(t, autoWorkspace, "")
+			initRepo(t, autoSource, "https://github.com/acme/service.git")
+			t.Cleanup(func() {
+				if isMountpoint(autoMountPath) {
+					output, err := command("", "fusermount3", "-u", autoMountPath)
+					if err != nil {
+						t.Logf("manual cleanup required: fusermount3 -u %s\n%s", autoMountPath, output)
+					}
+				}
+			})
+			autoEnv := append(os.Environ(),
+				"WSFOLD_TRUSTED_DIR="+autoTrusted,
+				"WSFOLD_EXTERNAL_DIR="+autoExternal,
+				"WSFOLD_TRUSTED_GITHUB_ORGS=acme",
+				"WSFOLD_PROJECTS_DIR=.",
+				"WSFOLD_MOUNT_BACKEND="+tc.backendEnv,
+			)
+			runProduct(t, autoWorkspace, autoEnv, wsfold, "init")
+			runProduct(t, autoWorkspace, autoEnv, wsfold, "summon", "service")
+			if !isMountpoint(autoMountPath) {
+				t.Fatalf("product: expected auto to create FUSE bind mount at %s", autoMountPath)
+			}
+			assertFileContains(t, filepath.Join(autoWorkspace, ".wsfold", "cache.yaml"), "backend: linux-fuse-bind")
+			runProduct(t, autoWorkspace, autoEnv, wsfold, "dismiss", "service")
+		})
+	}
 }
 
 func requireCommand(t *testing.T, name string) {

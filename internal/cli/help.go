@@ -100,8 +100,8 @@ var envHelpEntries = []envHelpEntry{
 	{
 		Name:        "WSFOLD_MOUNT_BACKEND",
 		Required:    false,
-		Default:     "symlink",
-		Description: "trusted attach backend; supported values: symlink, linux-fuse-bind, linux-native-bind",
+		Default:     "auto",
+		Description: "trusted attach backend policy; supported values: auto, symlink, linux-fuse-bind, linux-native-bind",
 	},
 }
 
@@ -133,12 +133,14 @@ func helpText() string {
 	b.WriteString("`wsfold worktree` is trusted-only. It summons the primary repository first, then creates a managed worktree in the active workspace. If a current-workspace managed worktree is shown as unmounted, selecting it repairs that managed worktree. Use --name to override the folder name and --create-branch to create a new branch.\n\n")
 	b.WriteString("`wsfold remove-worktrees` is for external Git worktree cleanup. It shows linked worktree rows known to trusted primary checkouts, hides the primary checkout rows themselves, removes only selected clean branch-backed external worktrees after confirmation, preserves branches and commits, and protects current workspace managed worktrees; use `wsfold dismiss` for those.\n\n")
 	b.WriteString("For bind-backed trusted attachments, run `wsfold dismiss <repo-ref>` from the workspace root rather than from inside the mounted folder.\n\n")
-	b.WriteString("Trusted attachments use the symlink backend by default. On Linux hosts with FUSE3, bindfs,\n")
-	b.WriteString("fusermount3, and a usable /dev/fuse, set WSFOLD_MOUNT_BACKEND=linux-fuse-bind to run\n")
-	b.WriteString("bindfs --no-allow-other and detach with fusermount3 -u. Linux devcontainers may instead use\n")
-	b.WriteString("WSFOLD_MOUNT_BACKEND=linux-native-bind with sudo mount --bind, CAP_SYS_ADMIN, and usable sudo.\n")
-	b.WriteString("Docker users who choose linux-fuse-bind inside a container must expose /dev/fuse and add CAP_SYS_ADMIN.\n")
-	b.WriteString("Some Docker runtimes may also require --security-opt apparmor=unconfined when AppArmor blocks mount syscalls.\n\n")
+	b.WriteString("Trusted attachments use WSFOLD_MOUNT_BACKEND=auto by default. Auto chooses the first eligible mounted backend before symlink fallback:\n")
+	b.WriteString("linux-native-bind for configured Linux devcontainers, then linux-fuse-bind for Linux hosts with FUSE3, bindfs,\n")
+	b.WriteString("fusermount3, and a usable /dev/fuse. Existing .wsfold/cache.yaml rows keep their concrete backend until deleted.\n")
+	b.WriteString("linux-fuse-bind runs bindfs --no-allow-other and detaches with fusermount3 -u.\n")
+	b.WriteString("Symlink fallback is supported but warns because it is weaker for workspace-visible trust boundaries.\n")
+	b.WriteString("Set WSFOLD_MOUNT_BACKEND=linux-fuse-bind, WSFOLD_MOUNT_BACKEND=linux-native-bind, or WSFOLD_MOUNT_BACKEND=symlink to force a concrete backend.\n")
+	b.WriteString("Linux devcontainers need CAP_SYS_ADMIN, usable sudo mount --bind, and may need --security-opt apparmor=unconfined for native bind mounts.\n")
+	b.WriteString("Docker users who choose linux-fuse-bind inside a container must expose /dev/fuse and add CAP_SYS_ADMIN.\n\n")
 
 	writeSection(&b, "Commands")
 	for _, entry := range commandHelpEntries {

@@ -57,6 +57,9 @@ func TestRunHelp(t *testing.T) {
 		t.Fatalf("help output did not contain bind dismiss cwd guidance: %q", output)
 	}
 	for _, snippet := range []string{
+		"WSFOLD_MOUNT_BACKEND=auto",
+		"first eligible mounted backend",
+		"Symlink fallback is supported but warns",
 		"WSFOLD_MOUNT_BACKEND=linux-fuse-bind",
 		"bindfs --no-allow-other",
 		"fusermount3 -u",
@@ -76,7 +79,7 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(output, "Environment:") || !strings.Contains(output, "WSFOLD_PROJECTS_DIR") || !strings.Contains(output, "default: .") {
 		t.Fatalf("help output did not contain environment section: %q", output)
 	}
-	if !strings.Contains(output, "WSFOLD_MOUNT_BACKEND") || !strings.Contains(output, "default: symlink") || !strings.Contains(output, "linux-fuse-bind") || !strings.Contains(output, "linux-native-bind") {
+	if !strings.Contains(output, "WSFOLD_MOUNT_BACKEND") || !strings.Contains(output, "default: auto") || !strings.Contains(output, "symlink") || !strings.Contains(output, "linux-fuse-bind") || !strings.Contains(output, "linux-native-bind") {
 		t.Fatalf("help output did not contain mount backend environment entry: %q", output)
 	}
 	if strings.Contains(output, "--privileged") {

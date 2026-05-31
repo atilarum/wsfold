@@ -8,29 +8,27 @@ import (
 	"testing"
 )
 
-func TestSelectedTrustedBackend(t *testing.T) {
+func TestParseTrustedBackendPolicy(t *testing.T) {
 	for name, tc := range map[string]struct {
 		value   string
+		policy  string
 		want    AttachmentBackend
 		wantErr string
 	}{
-		"unset":       {want: AttachmentBackendSymlink},
-		"symlink":     {value: "symlink", want: AttachmentBackendSymlink},
-		"native-bind": {value: "linux-native-bind", want: AttachmentBackendLinuxNativeBind},
-		"fuse":        {value: "linux-fuse-bind", want: AttachmentBackendLinuxFuseBind},
+		"unset":       {policy: "auto"},
+		"auto":        {value: "auto", policy: "auto"},
+		"symlink":     {value: "symlink", policy: "symlink", want: AttachmentBackendSymlink},
+		"native-bind": {value: "linux-native-bind", policy: "linux-native-bind", want: AttachmentBackendLinuxNativeBind},
+		"fuse":        {value: "linux-fuse-bind", policy: "linux-fuse-bind", want: AttachmentBackendLinuxFuseBind},
 		"unknown":     {value: "other", wantErr: "unsupported WSFOLD_MOUNT_BACKEND"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if tc.value == "" {
 				t.Setenv("WSFOLD_MOUNT_BACKEND", "")
-				t.Setenv("WSFOLD_MOUNT_BACKEND", "")
 			} else {
 				t.Setenv("WSFOLD_MOUNT_BACKEND", tc.value)
 			}
-			if name == "unset" {
-				t.Setenv("WSFOLD_MOUNT_BACKEND", "")
-			}
-			got, err := selectedTrustedBackend()
+			gotPolicy, gotBackend, err := parseTrustedBackendPolicy()
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("expected error containing %q, got %v", tc.wantErr, err)
@@ -38,10 +36,13 @@ func TestSelectedTrustedBackend(t *testing.T) {
 				return
 			}
 			if err != nil {
-				t.Fatalf("selectedTrustedBackend returned error: %v", err)
+				t.Fatalf("parseTrustedBackendPolicy returned error: %v", err)
 			}
-			if got != tc.want {
-				t.Fatalf("expected %q, got %q", tc.want, got)
+			if gotPolicy != tc.policy {
+				t.Fatalf("expected policy %q, got %q", tc.policy, gotPolicy)
+			}
+			if gotBackend != tc.want {
+				t.Fatalf("expected backend %q, got %q", tc.want, gotBackend)
 			}
 		})
 	}

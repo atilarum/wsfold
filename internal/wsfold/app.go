@@ -22,9 +22,10 @@ const (
 )
 
 type App struct {
-	Runner Runner
-	Stdout io.Writer
-	Stderr io.Writer
+	Runner          Runner
+	Stdout          io.Writer
+	Stderr          io.Writer
+	backendSelector *trustedBackendSelector
 }
 
 type WorktreeOptions struct {
@@ -40,11 +41,28 @@ func NewApp() *App {
 	}
 }
 
+func (a *App) beginCommand() func() {
+	previous := a.backendSelector
+	a.backendSelector = newTrustedBackendSelector(a.Runner)
+	return func() {
+		a.backendSelector = previous
+	}
+}
+
+func (a *App) trustedBackendSelector() *trustedBackendSelector {
+	if a.backendSelector == nil {
+		a.backendSelector = newTrustedBackendSelector(a.Runner)
+	}
+	return a.backendSelector
+}
+
 func (a *App) Summon(cwd string, ref string) error {
+	defer a.beginCommand()()
 	return a.summon(cwd, ref, TrustClassTrusted)
 }
 
 func (a *App) SummonAll(cwd string) error {
+	defer a.beginCommand()()
 	cfg, err := LoadConfig()
 	if err != nil {
 		return err
@@ -106,6 +124,7 @@ func (a *App) SummonAll(cwd string) error {
 }
 
 func (a *App) SummonUntrusted(cwd string, ref string) error {
+	defer a.beginCommand()()
 	return a.summon(cwd, ref, TrustClassExternal)
 }
 
@@ -254,6 +273,7 @@ func (a *App) summon(cwd string, ref string, requested TrustClass) error {
 }
 
 func (a *App) RecoverManagedWorktree(cwd string, ref string) error {
+	defer a.beginCommand()()
 	cfg, err := LoadConfig()
 	if err != nil {
 		return err
@@ -301,6 +321,7 @@ func (a *App) IsManagedWorktreeRecoveryTarget(cwd string, ref string) (bool, err
 }
 
 func (a *App) Worktree(cwd string, ref string, branch string, opts WorktreeOptions) error {
+	defer a.beginCommand()()
 	cfg, err := LoadConfig()
 	if err != nil {
 		return err
@@ -478,36 +499,17 @@ func (a *App) attachRepo(primaryRoot string, cfg Config, repo Repo, requested Tr
 	}
 
 	if requested == TrustClassTrusted {
-		backend, err := selectedTrustedBackend()
+		selection, err := a.trustedBackendSelector().Select()
 		if err != nil {
 			return err
 		}
-		entry.Backend = backend
+		entry.Backend = selection.Backend
 		entry.MountPath = trustedMountPath(primaryRoot, cfg.ProjectsDirName, completionFolderName(repo.CheckoutPath))
 		if err := ensureNoTrustedMountPathConflict(manifest, entry); err != nil {
 			return err
 		}
-		switch backend {
-		case AttachmentBackendSymlink:
-			if err := ensureTrustedSymlink(entry.MountPath, repo.CheckoutPath); err != nil {
-				return err
-			}
-		case AttachmentBackendLinuxNativeBind:
-			if err := nativeBindPreflight(a.Runner, manifest, entry); err != nil {
-				return err
-			}
-			if err := nativeBindAttach(a.Runner, entry); err != nil {
-				return err
-			}
-		case AttachmentBackendLinuxFuseBind:
-			if err := fuseBindPreflight(a.Runner, manifest, entry); err != nil {
-				return err
-			}
-			if err := fuseBindAttach(a.Runner, entry); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("trusted attachment backend %s is not implemented", backend)
+		if err := a.realizeTrustedAttachment(manifest, entry, selection, false); err != nil {
+			return err
 		}
 	}
 
@@ -560,37 +562,17 @@ func (a *App) persistTrustedCacheResolution(primaryRoot string, manifest Manifes
 
 func (a *App) recoverTrustedEntry(primaryRoot string, cfg Config, manifest Manifest, entry Entry) error {
 	previous := cloneManifest(manifest)
-	backend := entry.Backend
-	if backend == "" {
-		backend = AttachmentBackendSymlink
+	selection := concreteTrustedBackendSelection(entry.Backend)
+	if !entry.CachePresent || entry.CacheInferred || entry.Backend == "" {
+		var err error
+		selection, err = a.trustedBackendSelector().Select()
+		if err != nil {
+			return err
+		}
+		entry.Backend = selection.Backend
 	}
-	switch backend {
-	case AttachmentBackendSymlink:
-		if err := ensureTrustedSymlink(entry.MountPath, entry.CheckoutPath); err != nil {
-			return err
-		}
-	case AttachmentBackendLinuxNativeBind:
-		if err := prepareMountResidueForRecovery(entry.MountPath); err != nil {
-			return err
-		}
-		if err := nativeBindPreflight(a.Runner, manifest, entry); err != nil {
-			return err
-		}
-		if err := nativeBindAttach(a.Runner, entry); err != nil {
-			return err
-		}
-	case AttachmentBackendLinuxFuseBind:
-		if err := prepareMountResidueForRecovery(entry.MountPath); err != nil {
-			return err
-		}
-		if err := fuseBindPreflight(a.Runner, manifest, entry); err != nil {
-			return err
-		}
-		if err := fuseBindAttach(a.Runner, entry); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("trusted attachment backend %s is not implemented for recovery", backend)
+	if err := a.realizeTrustedAttachment(manifest, entry, selection, true); err != nil {
+		return err
 	}
 	if err := a.persistTrustedCacheResolution(primaryRoot, manifest, entry); err != nil {
 		return err
@@ -599,6 +581,57 @@ func (a *App) recoverTrustedEntry(primaryRoot string, cfg Config, manifest Manif
 		return err
 	}
 	return nil
+}
+
+func (a *App) realizeTrustedAttachment(manifest Manifest, entry Entry, selection trustedBackendSelection, recovery bool) error {
+	switch selection.Backend {
+	case AttachmentBackendSymlink:
+		if err := ensureTrustedSymlink(entry.MountPath, entry.CheckoutPath); err != nil {
+			return formatTrustedBackendFailure("create symlink attachment", selection, err)
+		}
+		a.warnSymlinkAttachment()
+	case AttachmentBackendLinuxNativeBind:
+		if recovery {
+			if err := prepareMountResidueForRecovery(entry.MountPath); err != nil {
+				return err
+			}
+		}
+		if err := nativeBindPreflight(a.Runner, manifest, entry); err != nil {
+			return formatTrustedBackendFailure("preflight native bind attachment", selection, err)
+		}
+		if err := nativeBindAttach(a.Runner, entry); err != nil {
+			return formatTrustedBackendFailure("attach native bind", selection, err)
+		}
+	case AttachmentBackendLinuxFuseBind:
+		if recovery {
+			if err := prepareMountResidueForRecovery(entry.MountPath); err != nil {
+				return err
+			}
+		}
+		if err := fuseBindPreflight(a.Runner, manifest, entry); err != nil {
+			return formatTrustedBackendFailure("preflight FUSE bind attachment", selection, err)
+		}
+		if err := fuseBindAttach(a.Runner, entry); err != nil {
+			return formatTrustedBackendFailure("attach FUSE bind", selection, err)
+		}
+	default:
+		return fmt.Errorf("trusted attachment backend %s is not implemented", selection.Backend)
+	}
+	return nil
+}
+
+func formatTrustedBackendFailure(action string, selection trustedBackendSelection, err error) error {
+	if !selection.Auto {
+		return err
+	}
+	if len(selection.Diagnostics) == 0 {
+		return fmt.Errorf("%s failed after auto selected %s: %w", action, selection.Backend, err)
+	}
+	return fmt.Errorf("%s failed after auto selected %s: %w; auto diagnostics: %s", action, selection.Backend, err, strings.Join(selection.Diagnostics, "; "))
+}
+
+func (a *App) warnSymlinkAttachment() {
+	_, _ = fmt.Fprintln(a.Stderr, symlinkAttachmentWarning())
 }
 
 func prepareMountResidueForRecovery(path string) error {

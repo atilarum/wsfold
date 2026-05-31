@@ -1,6 +1,6 @@
 # Linux FUSE Bind Backend
 
-WSFold uses the `symlink` backend by default. On Linux hosts with FUSE support, trusted repositories can instead be attached through `bindfs` by setting:
+WSFold uses `WSFOLD_MOUNT_BACKEND=auto` by default. On Linux hosts with FUSE support, auto selects `bindfs` when native devcontainer bind mounts are not eligible and the FUSE prerequisites are available. You can also force the FUSE backend with:
 
 ```bash
 export WSFOLD_MOUNT_BACKEND=linux-fuse-bind
@@ -8,7 +8,8 @@ export WSFOLD_MOUNT_BACKEND=linux-fuse-bind
 
 Supported values for `WSFOLD_MOUNT_BACKEND` are:
 
-- `symlink` - default behavior.
+- `auto` - default behavior; choose the first eligible mounted backend before warned symlink fallback.
+- `symlink` - force symlink attachments.
 - `linux-fuse-bind` - Linux host backend using `bindfs --no-allow-other` and `fusermount3 -u`.
 - `linux-native-bind` - Linux devcontainer backend using `sudo mount --bind` and `sudo umount`.
 
@@ -37,7 +38,7 @@ Dismiss runs:
 fusermount3 -u <workspace-path>
 ```
 
-`wsfold.yaml` records the managed workspace path, `.wsfold/cache.yaml` records `backend: linux-fuse-bind` and the source checkout, and the generated `.code-workspace` points at the workspace path, not the original checkout.
+`wsfold.yaml` records the managed workspace path, `.wsfold/cache.yaml` records `backend: linux-fuse-bind` and the source checkout, and the generated `.code-workspace` points at the workspace path, not the original checkout. The cache stores only the concrete backend actually used; it does not store `auto` or global capability state.
 
 If the FUSE daemon stops, a container restarts, or the mount namespace is reset, `wsfold.yaml` can still declare FUSE attachments while the runtime mounts are gone. Run:
 
@@ -51,7 +52,7 @@ first when you want read-only diagnostics. FUSE rows reported as `unmounted` are
 wsfold summon-all
 ```
 
-to restore every recoverable declared attachment and dependent managed worktree. Use `wsfold summon <repo-ref>` to recover one item. Recovery uses the backend recorded in `.wsfold/cache.yaml` while that cache row exists, not the current `WSFOLD_MOUNT_BACKEND` value. If the cache is deleted, recovery resolves the repository again and uses the current backend policy. Rows reported as `invalid` need manual inspection before retrying because WSFold cannot prove that automatic cleanup is safe.
+to restore every recoverable declared attachment and dependent managed worktree. Use `wsfold summon <repo-ref>` to recover one item. Recovery uses the backend recorded in `.wsfold/cache.yaml` while that cache row exists, not the current `WSFOLD_MOUNT_BACKEND` value. If the cache is deleted, recovery resolves the repository again and uses the current backend policy, which may record a different concrete backend. `wsfold status` remains read-only and does not run auto eligibility or recreate cache. Rows reported as `invalid` need manual inspection before retrying because WSFold cannot prove that automatic cleanup is safe.
 
 ## Docker and Devcontainers
 
@@ -101,6 +102,7 @@ WSFold preserves intent/cache state on busy unmount failures so retry is safe. I
 - Missing external root: `wsfold status` reports `invalid`; restore the external checkout path or adjust the composition instead of expecting FUSE recovery to clone it.
 - Unmounted managed worktree: `wsfold status` reports `unmounted`; run `wsfold summon <worktree-ref>` or `wsfold summon-all`.
 - Failed partial summon: verify `wsfold.yaml` and `.wsfold/cache.yaml` did not gain a successful new entry, remove any empty managed target directory if needed, and keep the source checkout intact.
+- Symlink fallback warning: auto did not find an eligible mounted backend. On Linux hosts, install FUSE3, `bindfs`, and `fusermount3`, then verify the user running WSFold can access `/dev/fuse`.
 
 ## Manual Backout
 

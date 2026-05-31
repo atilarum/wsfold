@@ -11,11 +11,11 @@ But that comes with real costs. Monorepos expand the working context for both hu
 
 WSFold gives you a task-shaped alternative to a monorepo: a lightweight, temporary workspace composition of exactly the repositories you need for the work in front of you. Summon what matters, keep the context tight, and dismiss it again when the task is done.
 
-You keep trusted repositories in a local directory and can also define trusted GitHub organizations for repositories that have not yet been cloned. Work does not happen directly in those storage locations. Instead, you start from any task-specific workspace directory and use `wsfold` to attach the repositories you need as symlinks, remove them when they are no longer needed, and transparently clone trusted repositories on demand.
+You keep trusted repositories in a local directory and can also define trusted GitHub organizations for repositories that have not yet been cloned. Work does not happen directly in those storage locations. Instead, you start from any task-specific workspace directory and use `wsfold` to attach the repositories you need through the best available trusted attachment backend, remove them when they are no longer needed, and transparently clone trusted repositories on demand.
 
 That model is useful for humans through an interactive CLI, but it becomes especially powerful when workspace composition is delegated to an LLM agent. Wrapped as an agent skill, `wsfold` lets an agent attach and dismiss repositories as needed for the task at hand. An example skill for this workflow is included in this repository.
 
-Technically, `wsfold` is a lightweight wrapper around symlinks and Git. Its power comes from encoding a workspace composition pattern in software so it can be applied consistently at scale.
+Technically, `wsfold` is a lightweight wrapper around Git plus workspace attachment backends such as Linux bind mounts, FUSE bind mounts, and symlinks. Its power comes from encoding a workspace composition pattern in software so it can be applied consistently at scale.
 
 ## Installation
 
@@ -55,15 +55,15 @@ export WSFOLD_TRUSTED_DIR="$HOME/repo/_prj"
 export WSFOLD_EXTERNAL_DIR="$HOME/repo/_ext"
 export WSFOLD_TRUSTED_GITHUB_ORGS="org_name,org_name2"
 export WSFOLD_PROJECTS_DIR="."
-# Optional. Defaults to symlink.
-export WSFOLD_MOUNT_BACKEND="symlink"
+# Optional. Defaults to auto.
+export WSFOLD_MOUNT_BACKEND="auto"
 ```
 
 `WSFOLD_TRUSTED_DIR` is required. It should point to an existing local directory that contains repositories you are comfortable treating as trusted, including opening them in your editor and running LLM agents against them.
 `WSFOLD_EXTERNAL_DIR` is required. It should point to an existing local directory that contains repositories you may want visible in the workspace, but do not want to treat as trusted or link directly into the trusted workspace tree.
 `WSFOLD_TRUSTED_GITHUB_ORGS` is an optional comma-separated list of GitHub organization names. It is strongly recommended if your work involves repositories from one or more GitHub organizations you trust.
 `WSFOLD_PROJECTS_DIR` is optional. It controls where trusted repositories are mounted inside the workspace. The default is `.` which means "mount directly into the workspace root". Any other non-empty value is treated as the name of the parent directory used for trusted mounts inside the workspace.
-`WSFOLD_MOUNT_BACKEND` is optional. The default is `symlink`. Linux hosts with FUSE3, `bindfs`, `fusermount3`, and a usable `/dev/fuse` can set `WSFOLD_MOUNT_BACKEND=linux-fuse-bind` to attach trusted repositories with `bindfs --no-allow-other` and detach them with `fusermount3 -u`. Linux devcontainers that explicitly grant `CAP_SYS_ADMIN` can set `WSFOLD_MOUNT_BACKEND=linux-native-bind` to attach trusted repositories with `sudo mount --bind` and detach them with `sudo umount`; some Docker runtimes may also need `--security-opt apparmor=unconfined` so AppArmor does not block mount syscalls.
+`WSFOLD_MOUNT_BACKEND` is optional. The default is `auto`, which chooses the first eligible mounted backend before falling back to symlink. Supported values are `auto`, `symlink`, `linux-fuse-bind`, and `linux-native-bind`. Linux devcontainers that grant `CAP_SYS_ADMIN` and usable sudo can use `linux-native-bind` through `sudo mount --bind`; some Docker runtimes may also need `--security-opt apparmor=unconfined` so AppArmor does not block mount syscalls. Linux hosts with FUSE3, `bindfs`, `fusermount3`, and a usable `/dev/fuse` can use `linux-fuse-bind` through `bindfs --no-allow-other`. Symlink fallback remains supported, but WSFold warns when it creates or recovers a symlink-backed trusted attachment because symlinks are weaker for workspace-visible trust boundaries.
 
 On Debian or Ubuntu, install the Linux FUSE bind prerequisites with:
 
@@ -169,7 +169,7 @@ The interactive picker and `wsfold status` use three recovery states for declare
 
 Commit `wsfold.yaml`. It is the portable workspace intent file: trusted repository refs with workspace-relative paths, external repository refs, and managed worktree refs with branch and workspace-relative path.
 
-Do not commit `.wsfold/cache.yaml`. WSFold adds it to `.gitignore` during `wsfold init`. The cache records machine-local resolution state such as source checkout paths and the last-used trusted backend. If the cache exists, WSFold uses those cached checkout paths and backend values for recovery even when `WSFOLD_MOUNT_BACKEND` has changed. If the cache is deleted, `wsfold status` remains read-only and does not recreate it; `wsfold summon` or `wsfold summon-all` can rebuild cache entries after a successful unique local resolution and realization. If multiple local checkouts match the same declared ref, inspect the candidates and summon with a more specific ref.
+Do not commit `.wsfold/cache.yaml`. WSFold adds it to `.gitignore` during `wsfold init`. The cache records machine-local resolution state such as source checkout paths and the concrete trusted backend actually used for each attachment. It does not store `auto` or global capability state. If the cache exists, WSFold uses those cached checkout paths and backend values for recovery even when `WSFOLD_MOUNT_BACKEND` has changed. If the cache is deleted, `wsfold status` remains read-only and does not recreate it; `wsfold summon` or `wsfold summon-all` can rebuild cache entries after a successful unique local resolution and realization, possibly selecting a different concrete backend under the current policy. If multiple local checkouts match the same declared ref, inspect the candidates and summon with a more specific ref.
 
 ## Status Diagnostics
 
@@ -191,11 +191,13 @@ Common diagnostics:
 
 `wsfold` maintains a `.code-workspace` file alongside the workspace root. `wsfold init` creates this file even before any repositories are attached, so the workspace can be opened in Visual Studio Code and compatible editors such as Cursor and Windsurf from the start as a multi-root project.
 
-Trusted repositories attached with `wsfold summon` are symlinked into the workspace and also added to that `.code-workspace` file as additional roots. `wsfold` does not hide the symlink location through generated Visual Studio Code exclude settings, and it does not manage editor settings as part of workspace composition.
+Trusted repositories attached with `wsfold summon` are mounted or symlinked into the workspace and also added to that `.code-workspace` file as additional roots. `wsfold` does not hide the managed attachment location through generated Visual Studio Code exclude settings, and it does not manage editor settings as part of workspace composition.
 
-Linux hosts can opt into FUSE-backed bind mounts instead of symlinks by setting `WSFOLD_MOUNT_BACKEND=linux-fuse-bind`. This backend runs `bindfs --no-allow-other <source-checkout> <workspace-path>`, writes the managed workspace path to the generated workspace file, and dismisses with `fusermount3 -u <workspace-path>`. It does not use `sudo mount --bind`, and ordinary host usage does not require `CAP_SYS_ADMIN`. See [docs/linux-fuse-bind.md](docs/linux-fuse-bind.md) for setup, validation, security notes, troubleshooting, and manual backout guidance.
+By default, `WSFOLD_MOUNT_BACKEND=auto` first tries eligible mounted backends and uses symlink only as a warned compatibility fallback. Auto currently has no production macOS mounted candidate; future native macOS work can add one ahead of Linux-specific candidates.
 
-Linux devcontainers can opt into native bind mounts instead of symlinks by setting `WSFOLD_MOUNT_BACKEND=linux-native-bind` and starting the container with `CAP_SYS_ADMIN`, for example Docker `--cap-add=SYS_ADMIN` or Compose `cap_add: [SYS_ADMIN]`. Some Docker runtimes may also require `--security-opt apparmor=unconfined` when the host AppArmor profile blocks mount syscalls. This backend uses the kernel mount path through `sudo mount --bind` and `sudo umount`; it does not require `/dev/fuse`, `bindfs`, or `fuse3`, and the documentation intentionally does not recommend `--privileged`. See [docs/devcontainer-native-bind.md](docs/devcontainer-native-bind.md) for setup, security notes, troubleshooting, and manual backout guidance.
+Linux hosts can use FUSE-backed bind mounts with `WSFOLD_MOUNT_BACKEND=auto` when the prerequisites are available, or force them with `WSFOLD_MOUNT_BACKEND=linux-fuse-bind`. This backend runs `bindfs --no-allow-other <source-checkout> <workspace-path>`, writes the managed workspace path to the generated workspace file, and dismisses with `fusermount3 -u <workspace-path>`. It does not use `sudo mount --bind`, and ordinary host usage does not require `CAP_SYS_ADMIN`. See [docs/linux-fuse-bind.md](docs/linux-fuse-bind.md) for setup, validation, security notes, troubleshooting, and manual backout guidance.
+
+Linux devcontainers can use native bind mounts with `WSFOLD_MOUNT_BACKEND=auto` when the prerequisites are available, or force them with `WSFOLD_MOUNT_BACKEND=linux-native-bind`. Start the container with `CAP_SYS_ADMIN`, for example Docker `--cap-add=SYS_ADMIN` or Compose `cap_add: [SYS_ADMIN]`. Some Docker runtimes may also require `--security-opt apparmor=unconfined` when the host AppArmor profile blocks mount syscalls. This backend uses the kernel mount path through `sudo mount --bind` and `sudo umount`; it does not require `/dev/fuse`, `bindfs`, or `fuse3`, and the documentation intentionally does not recommend `--privileged`. See [docs/devcontainer-native-bind.md](docs/devcontainer-native-bind.md) for setup, security notes, troubleshooting, and manual backout guidance.
 
 If a bind or FUSE mount disappears but `wsfold.yaml` still declares it, run `wsfold summon-all` from the workspace. To recover one item, run `wsfold summon <repo-ref>`. WSFold restores missing symlinks, absent bind/FUSE mounts with empty managed mount residue, and managed worktrees whose primary attachment can be restored. It refuses to overwrite non-empty target paths or user-owned worktrees; inspect those paths manually, move any user data aside if appropriate, and retry.
 
