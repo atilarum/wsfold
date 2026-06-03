@@ -109,25 +109,43 @@ func inspectMissingManagedWorktree(result ManagedWorktreeInspection, entry Manag
 
 	actualPath := strings.TrimSpace(worktreePaths[entry.Branch])
 	if actualPath != "" && filepath.Clean(actualPath) != filepath.Clean(entry.WorkspacePath) {
+		if _, err := os.Stat(actualPath); err != nil {
+			if os.IsNotExist(err) {
+				result.State = ManagedWorktreeInvalidControlPath
+				result.Reason = registeredAtDifferentPathReason(entry, actualPath, "The registered path is not available from this environment.")
+				return result
+			}
+			result.State = ManagedWorktreeInvalidControlPath
+			result.Reason = registeredAtDifferentPathReason(entry, actualPath, fmt.Sprintf("The registered path could not be inspected: %v.", err))
+			return result
+		}
 		dirty, err := worktreeHasChanges(runner, actualPath)
 		if err != nil {
 			result.State = ManagedWorktreeDirtyBlocked
-			result.Reason = fmt.Sprintf("managed worktree directory is missing at %s, but branch %s is still checked out at %s and its status could not be inspected: %v", entry.WorkspacePath, entry.Branch, actualPath, err)
+			result.Reason = registeredAtDifferentPathReason(entry, actualPath, fmt.Sprintf("The registered worktree status could not be inspected: %v.", err))
 			return result
 		}
 		if dirty {
 			result.State = ManagedWorktreeDirtyBlocked
-			result.Reason = fmt.Sprintf("managed worktree directory is missing at %s, but branch %s is still checked out at %s with staged, unstaged, or untracked changes", entry.WorkspacePath, entry.Branch, actualPath)
+			result.Reason = registeredAtDifferentPathReason(entry, actualPath, "The registered worktree has staged, unstaged, or untracked changes.")
 			return result
 		}
 		result.State = ManagedWorktreeInvalidControlPath
-		result.Reason = fmt.Sprintf("managed worktree directory is missing at %s, but branch %s is still checked out at %s", entry.WorkspacePath, entry.Branch, actualPath)
+		result.Reason = registeredAtDifferentPathReason(entry, actualPath, "")
 		return result
 	}
 
 	result.State = ManagedWorktreeMissing
 	result.Reason = "managed worktree directory is missing"
 	return result
+}
+
+func registeredAtDifferentPathReason(entry ManagedWorktreeEntry, actualPath string, detail string) string {
+	base := fmt.Sprintf("branch %s for %s is already registered at %s, but this workspace expects %s.", entry.Branch, entry.PrimaryRepoRef, actualPath, entry.WorkspacePath)
+	if strings.TrimSpace(detail) == "" {
+		return base
+	}
+	return base + " " + strings.TrimSpace(detail)
 }
 
 func findPrimaryEntryForManagedWorktree(manifest Manifest, entry ManagedWorktreeEntry) (Entry, bool) {

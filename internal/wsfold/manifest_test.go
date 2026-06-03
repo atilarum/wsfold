@@ -213,6 +213,57 @@ func TestRuntimeManifestSkipsLocalDiscoveryWhenCacheHasCheckoutPaths(t *testing.
 	}
 }
 
+func TestRuntimeManifestMissingCacheUsesTargetedLocalResolution(t *testing.T) {
+	root := t.TempDir()
+	trustedRoot := filepath.Join(root, "trusted-root")
+	externalRoot := filepath.Join(root, "external-root")
+	servicePath := filepath.Join(trustedRoot, "service")
+	nestedPath := filepath.Join(trustedRoot, "deep", "nested")
+	if err := os.MkdirAll(filepath.Join(servicePath, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir service repo: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(nestedPath, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir nested repo: %v", err)
+	}
+	if err := os.MkdirAll(externalRoot, 0o755); err != nil {
+		t.Fatalf("mkdir external root: %v", err)
+	}
+	t.Setenv(envTrustedDir, trustedRoot)
+	t.Setenv(envExternalDir, externalRoot)
+
+	workspaceManifest := WorkspaceManifest{
+		SchemaVersion: manifestVersion,
+		Trusted: []TrustedManifestEntry{
+			{Ref: "acme/service", Path: "service"},
+		},
+	}
+	cache := WorkspaceCache{SchemaVersion: manifestVersion}
+	runner := Runner{ExecCommand: func(name string, dir string, env []string, args ...string) (string, error) {
+		if filepath.Clean(dir) == filepath.Clean(nestedPath) {
+			t.Fatalf("targeted cache recovery should not hydrate nested repo %s", dir)
+		}
+		switch strings.Join(args, " ") {
+		case "branch --show-current":
+			return "main", nil
+		case "remote get-url origin":
+			return "https://github.com/acme/service.git", nil
+		default:
+			return "", nil
+		}
+	}}
+
+	manifest := runtimeManifestFromWorkspace(root, workspaceManifest, cache, runner)
+	if got := manifest.Trusted[0].CheckoutPath; got != servicePath {
+		t.Fatalf("trusted checkout_path = %q, want %q", got, servicePath)
+	}
+	if !manifest.Trusted[0].CacheInferred {
+		t.Fatalf("expected missing cache to be inferred from targeted local resolution")
+	}
+	if got := manifest.Trusted[0].ResolutionDetail; got != "" {
+		t.Fatalf("trusted resolution detail = %q, want empty", got)
+	}
+}
+
 func TestRuntimeManifestReportsLocalDiscoveryErrorOnMissingCache(t *testing.T) {
 	root := t.TempDir()
 	missingTrustedRoot := filepath.Join(root, "missing-trusted-root")
@@ -238,9 +289,7 @@ func TestRuntimeManifestReportsLocalDiscoveryErrorOnMissingCache(t *testing.T) {
 	detail := manifest.Trusted[0].ResolutionDetail
 	for _, snippet := range []string{
 		"cache missing for acme/service",
-		"local repository roots are unavailable",
-		"discover repositories",
-		"stat " + missingTrustedRoot,
+		"read " + missingTrustedRoot,
 	} {
 		if !strings.Contains(detail, snippet) {
 			t.Fatalf("resolution detail missing %q:\n%s", snippet, detail)

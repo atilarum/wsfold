@@ -257,9 +257,7 @@ trusted:
 	}
 	for _, snippet := range []string{
 		"cache missing for acme/service",
-		"local repository roots are unavailable",
-		"discover repositories",
-		"stat " + missingTrustedRoot,
+		"read " + missingTrustedRoot,
 	} {
 		if !strings.Contains(stdout.String(), snippet) {
 			t.Fatalf("status output missing %q:\n%s", snippet, stdout.String())
