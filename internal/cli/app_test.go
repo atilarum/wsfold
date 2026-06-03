@@ -399,7 +399,7 @@ func TestRunRemoveWorktreesCancelConfirmationDoesNotMutate(t *testing.T) {
 	}
 	var selectedID string
 	for _, row := range inventory.Rows {
-		if row.WorktreePath == worktreePath {
+		if sameFilesystemPath(row.WorktreePath, worktreePath) {
 			selectedID = row.ID
 			break
 		}
@@ -697,6 +697,17 @@ type trustedCacheForTest struct {
 	} `json:"repos"`
 }
 
+func sameFilesystemPath(a string, b string) bool {
+	a = filepath.Clean(a)
+	b = filepath.Clean(b)
+	if a == b {
+		return true
+	}
+	resolvedA, errA := filepath.EvalSymlinks(a)
+	resolvedB, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && filepath.Clean(resolvedA) == filepath.Clean(resolvedB)
+}
+
 func loadTrustedCacheForTest(org string) (trustedCacheForTest, bool, error) {
 	path, err := trustedRemoteCachePathForTest(org)
 	if err != nil {
@@ -714,9 +725,13 @@ func loadTrustedCacheForTest(org string) (trustedCacheForTest, bool, error) {
 }
 
 func trustedRemoteCachePathForTest(org string) (string, error) {
-	root, err := os.UserCacheDir()
-	if err != nil {
-		return "", err
+	root := strings.TrimSpace(os.Getenv("XDG_CACHE_HOME"))
+	if root == "" {
+		var err error
+		root, err = os.UserCacheDir()
+		if err != nil {
+			return "", err
+		}
 	}
 	return filepath.Join(root, "wsfold", "trusted-github", org+".json"), nil
 }

@@ -332,7 +332,7 @@ func classifyExternalWorktreeRow(runner Runner, primaryRoot string, manifest Man
 	row := ExternalWorktreeRow{
 		ID:                  externalWorktreeRowID(repo.CheckoutPath, normalizedPath),
 		Repository:          repo.DisplayRef(),
-		PrimaryCheckoutPath: cleanAbsPath(repo.CheckoutPath),
+		PrimaryCheckoutPath: displayAbsPath(repo.CheckoutPath),
 		WorktreePath:        record.Path,
 		NormalizedPath:      normalizedPath,
 		RealPath:            bestEffortRealPath(record.Path),
@@ -513,6 +513,21 @@ func manifestManagedWorktreeForPath(manifest Manifest, path string) (ManagedWork
 }
 
 func cleanAbsPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	clean := filepath.Clean(abs)
+	if canonical, err := canonicalPathWithExistingParent(clean); err == nil {
+		return canonical
+	}
+	return clean
+}
+
+func displayAbsPath(path string) string {
 	if path == "" {
 		return ""
 	}

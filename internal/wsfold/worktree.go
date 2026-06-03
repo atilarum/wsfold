@@ -176,7 +176,7 @@ func listWorktreeBranchPaths(runner Runner, repoPath string) (map[string]string,
 			continue
 		}
 		if path, ok := strings.CutPrefix(line, "worktree "); ok {
-			currentPath = strings.TrimSpace(path)
+			currentPath = cleanAbsPath(strings.TrimSpace(path))
 			continue
 		}
 		branch, ok := strings.CutPrefix(line, "branch refs/heads/")

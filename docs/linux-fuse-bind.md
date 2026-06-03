@@ -40,6 +40,8 @@ fusermount3 -u <workspace-path>
 
 `wsfold.yaml` records the managed workspace path, `.wsfold/cache.yaml` records `backend: linux-fuse-bind` and the source checkout, and the generated `.code-workspace` points at the workspace path, not the original checkout. The cache stores only the concrete backend actually used; it does not store `auto` or global capability state.
 
+WSFold adds the managed workspace path to the primary repository `.gitignore` in a visible WSFold-owned block. It does not write `.git/info/exclude` or generated Visual Studio Code exclude settings for this behavior. The ignored mountpoint keeps the primary repository status clean, but the mounted repository still uses its own Git metadata. An empty FUSE mountpoint directory is not tracked by Git unless you add your own placeholder file.
+
 If the FUSE daemon stops, a container restarts, or the mount namespace is reset, `wsfold.yaml` can still declare FUSE attachments while the runtime mounts are gone. Run:
 
 ```bash

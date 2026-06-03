@@ -157,16 +157,16 @@ func TestExternalWorktreeRemovalCandidatesHidePrimaryRowsAndUseReadableStatuses(
 
 	statusByPath := map[string]string{}
 	for _, candidate := range candidates {
-		if candidate.Description == primary {
+		if sameFilesystemPath(candidate.Description, primary) {
 			t.Fatalf("primary checkout should not be shown as a picker candidate: %#v", candidate)
 		}
-		statusByPath[candidate.Description] = string(candidate.Source)
+		statusByPath[cleanAbsPath(candidate.Description)] = string(candidate.Source)
 	}
-	if statusByPath[clean] != "clean" {
-		t.Fatalf("clean worktree status = %q", statusByPath[clean])
+	if statusByPath[cleanAbsPath(clean)] != "clean" {
+		t.Fatalf("clean worktree status = %q", statusByPath[cleanAbsPath(clean)])
 	}
-	if statusByPath[stale] != "missing" {
-		t.Fatalf("missing worktree status = %q", statusByPath[stale])
+	if statusByPath[cleanAbsPath(stale)] != "missing" {
+		t.Fatalf("missing worktree status = %q", statusByPath[cleanAbsPath(stale)])
 	}
 }
 

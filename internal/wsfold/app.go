@@ -76,6 +76,9 @@ func (a *App) SummonAll(cwd string) error {
 		return err
 	}
 	if len(manifest.Trusted) == 0 && len(manifest.ManagedWorktrees) == 0 {
+		if err := reconcileManagedWorkspaceIgnorePaths(primaryRoot, nil); err != nil {
+			return err
+		}
 		_, _ = fmt.Fprintln(a.Stdout, "Nothing to reconcile")
 		return nil
 	}
@@ -119,6 +122,14 @@ func (a *App) SummonAll(cwd string) error {
 	_, _ = fmt.Fprintf(a.Stdout, "Reconciliation complete: %d attached, %d recovered, %d invalid, %d failed\n", attached, recovered, invalid, failed)
 	if invalid > 0 || failed > 0 {
 		return fmt.Errorf("workspace reconciliation completed with %d invalid and %d failed entries", invalid, failed)
+	}
+	if current, err := loadManifest(primaryRoot); err == nil {
+		manifest = current
+	} else {
+		return err
+	}
+	if err := reconcileManagedWorkspaceIgnorePaths(primaryRoot, managedWorkspaceIgnorePathsFromManifest(manifest)); err != nil {
+		return err
 	}
 	return nil
 }
@@ -399,6 +410,9 @@ func (a *App) Worktree(cwd string, ref string, branch string, opts WorktreeOptio
 	if err := writeWorkspace(primaryRoot, previous, manifest, cfg.ProjectsDirName); err != nil {
 		return err
 	}
+	if err := addManagedWorkspaceIgnorePath(primaryRoot, entry.WorkspacePath); err != nil {
+		return err
+	}
 
 	_, _ = fmt.Fprintln(a.Stdout, formatManagedWorktreeSuccess(entry, primaryRoot))
 	return nil
@@ -520,6 +534,11 @@ func (a *App) attachRepo(primaryRoot string, cfg Config, repo Repo, requested Tr
 	if err := writeWorkspace(primaryRoot, previous, manifest, cfg.ProjectsDirName); err != nil {
 		return err
 	}
+	if requested == TrustClassTrusted {
+		if err := addManagedWorkspaceIgnorePath(primaryRoot, entry.MountPath); err != nil {
+			return err
+		}
+	}
 
 	_, _ = fmt.Fprintln(a.Stdout, formatSummonSuccess(requested, repo, entry, primaryRoot))
 	return nil
@@ -533,6 +552,9 @@ func (a *App) reconcileTrustedEntry(primaryRoot string, cfg Config, manifest Man
 			if err := a.persistTrustedCacheResolution(primaryRoot, manifest, entry); err != nil {
 				return RealizationAttached, err
 			}
+		}
+		if err := addManagedWorkspaceIgnorePath(primaryRoot, entry.MountPath); err != nil {
+			return RealizationAttached, err
 		}
 		_, _ = fmt.Fprintf(a.Stdout, "%s Trusted repository already attached: %s\n", ansiGreenBold+"✓"+ansiReset, ansiCyanBold+entry.RepoRef+ansiReset)
 		return RealizationAttached, nil
@@ -578,6 +600,9 @@ func (a *App) recoverTrustedEntry(primaryRoot string, cfg Config, manifest Manif
 		return err
 	}
 	if err := writeWorkspace(primaryRoot, previous, manifest, cfg.ProjectsDirName); err != nil {
+		return err
+	}
+	if err := addManagedWorkspaceIgnorePath(primaryRoot, entry.MountPath); err != nil {
 		return err
 	}
 	return nil
@@ -658,6 +683,9 @@ func (a *App) reconcileManagedWorktree(primaryRoot string, cfg Config, manifest 
 	realization := InspectManagedWorktreeRealization(manifest, entry, a.Runner)
 	switch realization.Status {
 	case RealizationAttached:
+		if err := addManagedWorkspaceIgnorePath(primaryRoot, entry.WorkspacePath); err != nil {
+			return RealizationAttached, err
+		}
 		_, _ = fmt.Fprintf(a.Stdout, "%s Managed worktree already attached: %s\n", ansiGreenBold+"✓"+ansiReset, ansiCyanBold+entry.RepoRef+ansiReset)
 		return RealizationAttached, nil
 	case RealizationInvalid:
@@ -687,7 +715,10 @@ func (a *App) recoverManagedWorktree(primaryRoot string, cfg Config, manifest Ma
 		}
 		realization = InspectManagedWorktreeRealization(manifest, entry, a.Runner)
 		if realization.Status == RealizationAttached {
-			return writeWorkspace(primaryRoot, previous, manifest, cfg.ProjectsDirName)
+			if err := writeWorkspace(primaryRoot, previous, manifest, cfg.ProjectsDirName); err != nil {
+				return err
+			}
+			return addManagedWorkspaceIgnorePath(primaryRoot, entry.WorkspacePath)
 		}
 	}
 	if realization.Inspection.State != ManagedWorktreeMissing {
@@ -720,6 +751,9 @@ func (a *App) recoverManagedWorktree(primaryRoot string, cfg Config, manifest Ma
 		return fmt.Errorf("recovered worktree did not satisfy workspace-local control path contract: %w", err)
 	}
 	if err := writeWorkspace(primaryRoot, previous, manifest, cfg.ProjectsDirName); err != nil {
+		return err
+	}
+	if err := addManagedWorkspaceIgnorePath(primaryRoot, entry.WorkspacePath); err != nil {
 		return err
 	}
 	return nil
@@ -858,6 +892,11 @@ func (a *App) dismissRepoEntry(cwd string, primaryRoot string, ref string, cfg C
 	if err := writeWorkspace(primaryRoot, previous, manifest, cfg.ProjectsDirName); err != nil {
 		return err
 	}
+	if entry.TrustClass == TrustClassTrusted {
+		if err := removeManagedWorkspaceIgnorePath(primaryRoot, entry.MountPath); err != nil {
+			return err
+		}
+	}
 
 	_, _ = fmt.Fprintln(a.Stdout, formatDismissSuccess(entry))
 	return nil
@@ -882,6 +921,9 @@ func (a *App) dismissManagedWorktree(primaryRoot string, cfg Config, manifest Ma
 		return err
 	}
 	if err := writeWorkspace(primaryRoot, previous, manifest, cfg.ProjectsDirName); err != nil {
+		return err
+	}
+	if err := removeManagedWorkspaceIgnorePath(primaryRoot, entry.WorkspacePath); err != nil {
 		return err
 	}
 
