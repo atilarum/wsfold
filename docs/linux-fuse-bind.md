@@ -8,7 +8,7 @@ export WSFOLD_MOUNT_BACKEND=linux-fuse-bind
 
 Supported values for `WSFOLD_MOUNT_BACKEND` are:
 
-- `auto` - default behavior; choose the first eligible mounted backend before warned symlink fallback.
+- `auto` - default behavior; choose the first eligible mounted backend before supported symlink fallback.
 - `symlink` - force symlink attachments.
 - `linux-fuse-bind` - Linux host backend using `bindfs --no-allow-other` and `fusermount3 -u`.
 - `linux-native-bind` - Linux devcontainer backend using `sudo mount --bind` and `sudo umount`.
@@ -102,7 +102,7 @@ WSFold preserves intent/cache state on busy unmount failures so retry is safe. I
 - Missing external root: `wsfold status` reports `invalid`; restore the external checkout path or adjust the composition instead of expecting FUSE recovery to clone it.
 - Unmounted managed worktree: `wsfold status` reports `unmounted`; run `wsfold summon <worktree-ref>` or `wsfold summon-all`.
 - Failed partial summon: verify `wsfold.yaml` and `.wsfold/cache.yaml` did not gain a successful new entry, remove any empty managed target directory if needed, and keep the source checkout intact.
-- Symlink fallback warning: auto did not find an eligible mounted backend. On Linux hosts, install FUSE3, `bindfs`, and `fusermount3`, then verify the user running WSFold can access `/dev/fuse`.
+- Symlink fallback selected: auto did not find an eligible mounted backend. Symlink attachments are supported and persistent; Linux hosts can install FUSE3, `bindfs`, and `fusermount3` when they intentionally want mounted attachments.
 
 ## Manual Backout
 

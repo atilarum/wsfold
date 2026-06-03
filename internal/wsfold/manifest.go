@@ -66,6 +66,11 @@ func saveManifest(primaryRoot string, manifest Manifest) error {
 	sortManagedWorktrees(manifest.ManagedWorktrees)
 
 	workspaceManifest, cache := workspaceManifestAndCacheFromRuntime(primaryRoot, manifest)
+	existingCache, err := loadWorkspaceCache(primaryRoot)
+	if err != nil {
+		return err
+	}
+	cache.AgentAccess = append([]AgentAccessEntry(nil), existingCache.AgentAccess...)
 	if err := validateWorkspaceManifest(workspaceManifest); err != nil {
 		return err
 	}
@@ -83,7 +88,16 @@ func saveManifest(primaryRoot string, manifest Manifest) error {
 		return fmt.Errorf("write manifest: %w", err)
 	}
 
-	if len(cache.Trusted) == 0 && len(cache.External) == 0 {
+	return saveWorkspaceCache(primaryRoot, cache)
+}
+
+func saveWorkspaceCache(primaryRoot string, cache WorkspaceCache) error {
+	cache.SchemaVersion = manifestVersion
+	if err := validateWorkspaceCacheShape(cache); err != nil {
+		return err
+	}
+	sortWorkspaceCache(&cache)
+	if len(cache.Trusted) == 0 && len(cache.External) == 0 && len(cache.AgentAccess) == 0 {
 		if err := os.Remove(cachePath(primaryRoot)); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove empty cache: %w", err)
 		}
@@ -138,6 +152,7 @@ func loadWorkspaceCache(primaryRoot string) (WorkspaceCache, error) {
 				SchemaVersion: manifestVersion,
 				Trusted:       []TrustedCacheEntry{},
 				External:      []ExternalCacheEntry{},
+				AgentAccess:   []AgentAccessEntry{},
 			}, nil
 		}
 		return WorkspaceCache{}, fmt.Errorf("read cache: %w", err)
@@ -517,6 +532,35 @@ func validateWorkspaceCacheShape(cache WorkspaceCache) error {
 			return fmt.Errorf("external cache entry %s has empty checkout_path", entry.Ref)
 		}
 	}
+	seenAgentAccess := map[string]struct{}{}
+	for _, entry := range cache.AgentAccess {
+		if strings.TrimSpace(entry.Agent) == "" {
+			return fmt.Errorf("agent access cache entry has empty agent")
+		}
+		if strings.TrimSpace(entry.Scope) == "" {
+			return fmt.Errorf("agent access cache entry has empty scope")
+		}
+		if strings.TrimSpace(entry.ConfigPath) == "" {
+			return fmt.Errorf("agent access cache entry has empty config_path")
+		}
+		if strings.TrimSpace(entry.RepoRef) == "" {
+			return fmt.Errorf("agent access cache entry has empty repo_ref")
+		}
+		if strings.TrimSpace(entry.CheckoutPath) == "" {
+			return fmt.Errorf("agent access cache entry has empty checkout_path")
+		}
+		key := strings.Join([]string{
+			strings.TrimSpace(entry.Agent),
+			strings.TrimSpace(entry.Scope),
+			filepath.Clean(entry.ConfigPath),
+			normalizeRepoRef(entry.RepoRef),
+			filepath.Clean(entry.CheckoutPath),
+		}, "\x00")
+		if _, ok := seenAgentAccess[key]; ok {
+			return fmt.Errorf("duplicate agent access cache entry for %s %s %s", entry.Agent, entry.RepoRef, entry.CheckoutPath)
+		}
+		seenAgentAccess[key] = struct{}{}
+	}
 	return nil
 }
 
@@ -559,6 +603,23 @@ func sortWorkspaceCache(cache *WorkspaceCache) {
 	})
 	sort.Slice(cache.External, func(i, j int) bool {
 		return cache.External[i].Ref < cache.External[j].Ref
+	})
+	sort.Slice(cache.AgentAccess, func(i, j int) bool {
+		left := cache.AgentAccess[i]
+		right := cache.AgentAccess[j]
+		if left.Agent != right.Agent {
+			return left.Agent < right.Agent
+		}
+		if left.Scope != right.Scope {
+			return left.Scope < right.Scope
+		}
+		if left.ConfigPath != right.ConfigPath {
+			return left.ConfigPath < right.ConfigPath
+		}
+		if left.RepoRef != right.RepoRef {
+			return left.RepoRef < right.RepoRef
+		}
+		return left.CheckoutPath < right.CheckoutPath
 	})
 }
 

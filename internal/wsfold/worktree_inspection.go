@@ -108,7 +108,7 @@ func inspectMissingManagedWorktree(result ManagedWorktreeInspection, entry Manag
 	}
 
 	actualPath := strings.TrimSpace(worktreePaths[entry.Branch])
-	if actualPath != "" && filepath.Clean(actualPath) != filepath.Clean(entry.WorkspacePath) {
+	if actualPath != "" && !samePath(actualPath, entry.WorkspacePath) {
 		if _, err := os.Stat(actualPath); err != nil {
 			if os.IsNotExist(err) {
 				result.State = ManagedWorktreeInvalidControlPath
@@ -194,7 +194,7 @@ func validateManagedWorktreeControlPath(entry ManagedWorktreeEntry, primary Entr
 	}
 	expected := filepath.Clean(filepath.Join(entry.WorkspacePath, ".git"))
 	got := filepath.Clean(strings.TrimSpace(string(backref)))
-	if got != expected {
+	if !samePath(got, expected) {
 		return "", "", fmt.Errorf("worktree admin back-reference %s points to %s, want %s", backrefPath, got, expected)
 	}
 

@@ -59,7 +59,8 @@ func TestRunHelp(t *testing.T) {
 	for _, snippet := range []string{
 		"WSFOLD_MOUNT_BACKEND=auto",
 		"first eligible mounted backend",
-		"Symlink fallback is supported but warns",
+		"Symlink fallback is supported and persists",
+		"WSFOLD_ADD_AGENT_DIRS=false",
 		"WSFOLD_MOUNT_BACKEND=linux-fuse-bind",
 		"bindfs --no-allow-other",
 		"fusermount3 -u",
@@ -399,7 +400,7 @@ func TestRunRemoveWorktreesCancelConfirmationDoesNotMutate(t *testing.T) {
 	}
 	var selectedID string
 	for _, row := range inventory.Rows {
-		if row.WorktreePath == worktreePath {
+		if sameTestPath(row.WorktreePath, worktreePath) {
 			selectedID = row.ID
 			break
 		}
@@ -689,6 +690,24 @@ exit 1
 	}
 }
 
+func sameTestPath(left string, right string) bool {
+	return canonicalTestPath(left) == canonicalTestPath(right)
+}
+
+func canonicalTestPath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return filepath.Clean(resolved)
+	}
+	if strings.HasPrefix(abs, "/var/") {
+		return filepath.Clean("/private" + abs)
+	}
+	return filepath.Clean(abs)
+}
+
 type trustedCacheForTest struct {
 	Org       string    `json:"org"`
 	FetchedAt time.Time `json:"fetchedAt"`
@@ -714,6 +733,9 @@ func loadTrustedCacheForTest(org string) (trustedCacheForTest, bool, error) {
 }
 
 func trustedRemoteCachePathForTest(org string) (string, error) {
+	if root := strings.TrimSpace(os.Getenv("XDG_CACHE_HOME")); root != "" {
+		return filepath.Join(root, "wsfold", "trusted-github", org+".json"), nil
+	}
 	root, err := os.UserCacheDir()
 	if err != nil {
 		return "", err

@@ -110,7 +110,7 @@ func addWorktree(t *testing.T, h *testutil.Harness, primary string, relativePath
 func requireRow(t *testing.T, rows []wsfold.ExternalWorktreeRow, path string, lifecycle wsfold.ExternalWorktreeLifecycleClass, selectable bool) wsfold.ExternalWorktreeRow {
 	t.Helper()
 	for _, row := range rows {
-		if filepath.Clean(row.WorktreePath) != filepath.Clean(path) {
+		if !samePath(row.WorktreePath, path) {
 			continue
 		}
 		if row.Lifecycle != lifecycle || row.Selectable != selectable {
@@ -120,6 +120,24 @@ func requireRow(t *testing.T, rows []wsfold.ExternalWorktreeRow, path string, li
 	}
 	t.Fatalf("missing row for %s in %#v", path, rows)
 	return wsfold.ExternalWorktreeRow{}
+}
+
+func samePath(left string, right string) bool {
+	return canonicalPath(left) == canonicalPath(right)
+}
+
+func canonicalPath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return filepath.Clean(resolved)
+	}
+	if strings.HasPrefix(abs, "/var/") {
+		return filepath.Clean("/private" + abs)
+	}
+	return filepath.Clean(abs)
 }
 
 func requireLifecycle(t *testing.T, rows []wsfold.ExternalWorktreeRow, lifecycle wsfold.ExternalWorktreeLifecycleClass, selectable bool) wsfold.ExternalWorktreeRow {

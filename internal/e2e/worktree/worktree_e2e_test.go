@@ -128,9 +128,27 @@ func assertControlPath(t *testing.T, primaryPath string, worktreePath string) {
 	if err != nil {
 		t.Fatalf("read admin back-reference: %v", err)
 	}
-	if got, want := filepath.Clean(strings.TrimSpace(string(backref))), filepath.Clean(filepath.Join(worktreePath, ".git")); got != want {
+	if got, want := filepath.Clean(strings.TrimSpace(string(backref))), filepath.Clean(filepath.Join(worktreePath, ".git")); !samePath(got, want) {
 		t.Fatalf("unexpected admin back-reference: got %s want %s", got, want)
 	}
+}
+
+func samePath(left string, right string) bool {
+	return canonicalPath(left) == canonicalPath(right)
+}
+
+func canonicalPath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return filepath.Clean(resolved)
+	}
+	if strings.HasPrefix(abs, "/var/") {
+		return filepath.Clean("/private" + abs)
+	}
+	return filepath.Clean(abs)
 }
 
 func hasAnyPrefix(path string, roots []string) bool {

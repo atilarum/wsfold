@@ -57,13 +57,24 @@ export WSFOLD_TRUSTED_GITHUB_ORGS="org_name,org_name2"
 export WSFOLD_PROJECTS_DIR="."
 # Optional. Defaults to auto.
 export WSFOLD_MOUNT_BACKEND="auto"
+# Optional. Defaults to true.
+export WSFOLD_ADD_AGENT_DIRS="true"
 ```
 
 `WSFOLD_TRUSTED_DIR` is required. It should point to an existing local directory that contains repositories you are comfortable treating as trusted, including opening them in your editor and running LLM agents against them.
 `WSFOLD_EXTERNAL_DIR` is required. It should point to an existing local directory that contains repositories you may want visible in the workspace, but do not want to treat as trusted or link directly into the trusted workspace tree.
 `WSFOLD_TRUSTED_GITHUB_ORGS` is an optional comma-separated list of GitHub organization names. It is strongly recommended if your work involves repositories from one or more GitHub organizations you trust.
 `WSFOLD_PROJECTS_DIR` is optional. It controls where trusted repositories are mounted inside the workspace. The default is `.` which means "mount directly into the workspace root". Any other non-empty value is treated as the name of the parent directory used for trusted mounts inside the workspace.
-`WSFOLD_MOUNT_BACKEND` is optional. The default is `auto`, which chooses the first eligible mounted backend before falling back to symlink. Supported values are `auto`, `symlink`, `linux-fuse-bind`, and `linux-native-bind`. Linux devcontainers that grant `CAP_SYS_ADMIN` and usable sudo can use `linux-native-bind` through `sudo mount --bind`; some Docker runtimes may also need `--security-opt apparmor=unconfined` so AppArmor does not block mount syscalls. Linux hosts with FUSE3, `bindfs`, `fusermount3`, and a usable `/dev/fuse` can use `linux-fuse-bind` through `bindfs --no-allow-other`. Symlink fallback remains supported, but WSFold warns when it creates or recovers a symlink-backed trusted attachment because symlinks are weaker for workspace-visible trust boundaries.
+`WSFOLD_MOUNT_BACKEND` is optional. The default is `auto`, which chooses the first eligible mounted backend before falling back to symlink. Supported values are `auto`, `symlink`, `linux-fuse-bind`, and `linux-native-bind`. Linux devcontainers that grant `CAP_SYS_ADMIN` and usable sudo can use `linux-native-bind` through `sudo mount --bind`; some Docker runtimes may also need `--security-opt apparmor=unconfined` so AppArmor does not block mount syscalls. Linux hosts with FUSE3, `bindfs`, `fusermount3`, and a usable `/dev/fuse` can use `linux-fuse-bind` through `bindfs --no-allow-other`. Symlink fallback is supported and persists across restarts. On macOS, until a production native mounted backend ships, symlink attachments are the supported path for workspace composition.
+`WSFOLD_ADD_AGENT_DIRS` is optional. It defaults to enabled; set it to exactly `false` to stop WSFold from updating Codex and Claude Code access configuration.
+
+## Agent Access Configuration
+
+Trusted repositories attached with `wsfold summon` or reconciled with `wsfold summon-all` are also added to local coding-agent access configuration by default. This lets agents that enforce filesystem trust boundaries edit the real trusted checkout path even when the workspace root contains a symlink or mounted attachment. Current Codex or Claude Code sessions may need to be restarted or reopened before they reload newly written config.
+
+For Codex, WSFold prefers project-local `.codex/config.toml` and writes trusted checkout paths to `sandbox_workspace_write.writable_roots`. When WSFold creates or manages that project-local Codex file as machine-local config, it adds `.codex/config.toml` to `.gitignore`. If `.codex/config.toml` already exists and is not ignored by Git, WSFold treats it as shared project config, leaves it unchanged, and writes the root to `~/.codex/config.toml` instead. In that fallback mode WSFold prints the exact home config path it modified, and `wsfold dismiss` does not automatically remove the global Codex root.
+
+For Claude Code, WSFold writes trusted checkout paths to `.claude/settings.local.json` under `permissions.additionalDirectories` and adds `.claude/settings.local.json` to `.gitignore`. WSFold preserves user-owned entries in both Codex and Claude files and removes only roots it recorded as WSFold-owned project-local entries.
 
 On Debian or Ubuntu, install the Linux FUSE bind prerequisites with:
 
@@ -191,9 +202,9 @@ Common diagnostics:
 
 `wsfold` maintains a `.code-workspace` file alongside the workspace root. `wsfold init` creates this file even before any repositories are attached, so the workspace can be opened in Visual Studio Code and compatible editors such as Cursor and Windsurf from the start as a multi-root project.
 
-Trusted repositories attached with `wsfold summon` are mounted or symlinked into the workspace and also added to that `.code-workspace` file as additional roots. `wsfold` does not hide the managed attachment location through generated Visual Studio Code exclude settings, and it does not manage editor settings as part of workspace composition.
+Trusted repositories attached with `wsfold summon` are mounted or symlinked into the workspace and also added to that `.code-workspace` file as additional roots. `wsfold` does not hide the managed attachment location through generated Visual Studio Code exclude settings. Agent access files for Codex and Claude Code are managed separately as described above.
 
-By default, `WSFOLD_MOUNT_BACKEND=auto` first tries eligible mounted backends and uses symlink only as a warned compatibility fallback. Auto currently has no production macOS mounted candidate; future native macOS work can add one ahead of Linux-specific candidates.
+By default, `WSFOLD_MOUNT_BACKEND=auto` first tries eligible mounted backends and then uses symlink as a supported persistent fallback. Auto currently has no production macOS mounted candidate, so symlink attachments are the supported path on macOS until a native mounted backend ships.
 
 Linux hosts can use FUSE-backed bind mounts with `WSFOLD_MOUNT_BACKEND=auto` when the prerequisites are available, or force them with `WSFOLD_MOUNT_BACKEND=linux-fuse-bind`. This backend runs `bindfs --no-allow-other <source-checkout> <workspace-path>`, writes the managed workspace path to the generated workspace file, and dismisses with `fusermount3 -u <workspace-path>`. It does not use `sudo mount --bind`, and ordinary host usage does not require `CAP_SYS_ADMIN`. See [docs/linux-fuse-bind.md](docs/linux-fuse-bind.md) for setup, validation, security notes, troubleshooting, and manual backout guidance.
 
