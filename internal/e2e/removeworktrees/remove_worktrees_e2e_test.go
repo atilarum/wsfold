@@ -80,10 +80,10 @@ func TestRemoveWorktreesContract(t *testing.T) {
 	}
 	h.RunGit(primary, "rev-parse", "--verify", "contract-clean")
 	list := h.RunGit(primary, "worktree", "list", "--porcelain")
-	if strings.Contains(list, staleA) {
+	if gitWorktreeListContainsPath(list, staleA) {
 		t.Fatalf("selected stale metadata should be gone, got %q", list)
 	}
-	if !strings.Contains(list, staleB) {
+	if !gitWorktreeListContainsPath(list, staleB) {
 		t.Fatalf("unselected stale metadata should remain, got %q", list)
 	}
 	if string(manifestBefore) != string(mustRead(t, filepath.Join(h.Workspace, "wsfold.yaml"))) {
@@ -110,7 +110,7 @@ func addWorktree(t *testing.T, h *testutil.Harness, primary string, relativePath
 func requireRow(t *testing.T, rows []wsfold.ExternalWorktreeRow, path string, lifecycle wsfold.ExternalWorktreeLifecycleClass, selectable bool) wsfold.ExternalWorktreeRow {
 	t.Helper()
 	for _, row := range rows {
-		if filepath.Clean(row.WorktreePath) != filepath.Clean(path) {
+		if !sameFilesystemPath(row.WorktreePath, path) {
 			continue
 		}
 		if row.Lifecycle != lifecycle || row.Selectable != selectable {
@@ -131,6 +131,50 @@ func requireLifecycle(t *testing.T, rows []wsfold.ExternalWorktreeRow, lifecycle
 	}
 	t.Fatalf("missing row with lifecycle=%s selectable=%v in %#v", lifecycle, selectable, rows)
 	return wsfold.ExternalWorktreeRow{}
+}
+
+func gitWorktreeListContainsPath(list string, path string) bool {
+	for _, line := range strings.Split(list, "\n") {
+		candidate, ok := strings.CutPrefix(line, "worktree ")
+		if ok && sameFilesystemPath(candidate, path) {
+			return true
+		}
+	}
+	return false
+}
+
+func sameFilesystemPath(a string, b string) bool {
+	a = filepath.Clean(a)
+	b = filepath.Clean(b)
+	if a == b {
+		return true
+	}
+	canonicalA, errA := canonicalPathWithExistingParent(a)
+	canonicalB, errB := canonicalPathWithExistingParent(b)
+	return errA == nil && errB == nil && canonicalA == canonicalB
+}
+
+func canonicalPathWithExistingParent(path string) (string, error) {
+	path = filepath.Clean(path)
+	rest := []string{}
+	for {
+		if _, err := os.Stat(path); err == nil {
+			resolved, resolveErr := filepath.EvalSymlinks(path)
+			if resolveErr != nil {
+				return "", resolveErr
+			}
+			parts := append([]string{resolved}, rest...)
+			return filepath.Clean(filepath.Join(parts...)), nil
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return "", os.ErrNotExist
+		}
+		rest = append([]string{filepath.Base(path)}, rest...)
+		path = parent
+	}
 }
 
 func mustRead(t *testing.T, path string) []byte {

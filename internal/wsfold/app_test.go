@@ -83,6 +83,101 @@ func TestSummonExistingTrustedRepo(t *testing.T) {
 	}
 }
 
+func TestManagedWorkspaceGitignoreLifecycleContract(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	userGitignore := "# user rules\n*.local\n"
+	if err := os.WriteFile(filepath.Join(h.Workspace, ".gitignore"), []byte(".wsfold/cache.yaml\n"+userGitignore), 0o644); err != nil {
+		t.Fatalf("seed .gitignore: %v", err)
+	}
+	excludePath := filepath.Join(h.Workspace, ".git", "info", "exclude")
+	excludeBefore, err := os.ReadFile(excludePath)
+	if err != nil {
+		t.Fatalf("read .git/info/exclude before: %v", err)
+	}
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	h.RunGit(repoPath, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.RunGit(repoPath, "branch", "feature/worktree")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("Summon returned error: %v", err)
+	}
+	assertManagedGitignorePaths(t, h.Workspace, "/service")
+	assertPrimaryStatusOmits(t, h, "service", "service-feature-worktree")
+	assertGitInfoExcludeUnchanged(t, excludePath, excludeBefore)
+	assertWorkspaceDoesNotCreateExcludes(t, h.Workspace)
+
+	if err := app.Worktree(h.Workspace, "service", "feature/worktree", WorktreeOptions{}); err != nil {
+		t.Fatalf("Worktree returned error: %v", err)
+	}
+	worktreePath := filepath.Join(h.Workspace, "service-feature-worktree")
+	assertManagedGitignorePaths(t, h.Workspace, "/service", "/service-feature-worktree")
+	assertPrimaryStatusOmits(t, h, "service", "service-feature-worktree")
+	assertGitInfoExcludeUnchanged(t, excludePath, excludeBefore)
+	assertWorkspaceDoesNotCreateExcludes(t, h.Workspace)
+
+	if err := os.WriteFile(filepath.Join(h.Workspace, ".gitignore"), []byte(".wsfold/cache.yaml\n"+userGitignore), 0o644); err != nil {
+		t.Fatalf("simulate .gitignore managed block drift: %v", err)
+	}
+	if err := app.SummonAll(h.Workspace); err != nil {
+		t.Fatalf("SummonAll returned error: %v", err)
+	}
+	assertManagedGitignorePaths(t, h.Workspace, "/service", "/service-feature-worktree")
+
+	serviceOnlyGitignore := ".wsfold/cache.yaml\n" + userGitignore +
+		"# BEGIN WSFOLD MANAGED WORKSPACE PATHS\n/service\n# END WSFOLD MANAGED WORKSPACE PATHS\n"
+	if err := os.WriteFile(filepath.Join(h.Workspace, ".gitignore"), []byte(serviceOnlyGitignore), 0o644); err != nil {
+		t.Fatalf("simulate .gitignore managed block drift before recovery: %v", err)
+	}
+	if err := os.RemoveAll(worktreePath); err != nil {
+		t.Fatalf("remove managed worktree directory: %v", err)
+	}
+	if err := app.Summon(h.Workspace, "acme/service/feature/worktree"); err != nil {
+		t.Fatalf("Summon managed worktree recovery returned error: %v", err)
+	}
+	assertManagedGitignorePaths(t, h.Workspace, "/service", "/service-feature-worktree")
+
+	if err := os.WriteFile(filepath.Join(worktreePath, "dirty.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatalf("write dirty worktree file: %v", err)
+	}
+	gitignoreBeforeFailedDismiss, err := os.ReadFile(filepath.Join(h.Workspace, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore before failed dismiss: %v", err)
+	}
+	err = app.Dismiss(h.Workspace, "acme/service/feature/worktree")
+	if err == nil || !strings.Contains(err.Error(), "cannot be dismissed automatically") {
+		t.Fatalf("expected dirty worktree dismiss refusal, got %v", err)
+	}
+	gitignoreAfterFailedDismiss, err := os.ReadFile(filepath.Join(h.Workspace, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore after failed dismiss: %v", err)
+	}
+	if string(gitignoreAfterFailedDismiss) != string(gitignoreBeforeFailedDismiss) {
+		t.Fatalf("failed dismiss should preserve .gitignore\nbefore:\n%s\nafter:\n%s", gitignoreBeforeFailedDismiss, gitignoreAfterFailedDismiss)
+	}
+
+	if err := os.Remove(filepath.Join(worktreePath, "dirty.txt")); err != nil {
+		t.Fatalf("remove dirty worktree file: %v", err)
+	}
+	if err := app.Dismiss(h.Workspace, "acme/service/feature/worktree"); err != nil {
+		t.Fatalf("Dismiss managed worktree returned error: %v", err)
+	}
+	assertManagedGitignorePaths(t, h.Workspace, "/service")
+	if err := app.Dismiss(h.Workspace, "acme/service"); err != nil {
+		t.Fatalf("Dismiss trusted repo returned error: %v", err)
+	}
+	assertNoManagedGitignoreBlock(t, h.Workspace)
+	assertGitignoreContains(t, h.Workspace, userGitignore)
+	assertGitInfoExcludeUnchanged(t, excludePath, excludeBefore)
+}
+
 func TestSummonRecoversDeclaredSymlinkAttachment(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnv(t, h)
@@ -578,6 +673,8 @@ func TestSummonLinuxFuseBindUsesMountBeforeManifestWrite(t *testing.T) {
 	if !strings.Contains(stdout.String(), "linux-fuse-bind") || !strings.Contains(stdout.String(), "fusermount3 -u") {
 		t.Fatalf("expected FUSE bind success output with backout, got:\n%s", stdout.String())
 	}
+	assertManagedGitignorePaths(t, h.Workspace, "/service")
+	assertPrimaryStatusOmits(t, h, "service")
 	if !containsString(calls, "bindfs --no-allow-other "+repoPath+" "+filepath.Join(h.Workspace, "service")) {
 		t.Fatalf("expected bindfs command construction; calls: %v", calls)
 	}
@@ -746,6 +843,8 @@ func TestSummonLinuxNativeBindUsesMountBeforeManifestWrite(t *testing.T) {
 	if !strings.Contains(stdout.String(), "linux-native-bind") || !strings.Contains(stdout.String(), "sudo umount") {
 		t.Fatalf("expected native bind success output with backout, got:\n%s", stdout.String())
 	}
+	assertManagedGitignorePaths(t, h.Workspace, "/service")
+	assertPrimaryStatusOmits(t, h, "service")
 	if !containsString(calls, "manifest-before-mount:present") {
 		t.Fatalf("expected mount to occur before updated manifest write; calls: %v", calls)
 	}
@@ -1175,7 +1274,7 @@ func TestWorktreeRejectsBranchAlreadyCheckedOutByWorktreeBeforeGitAdd(t *testing
 	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
 
 	err := app.Worktree(h.Workspace, "service", "dg", WorktreeOptions{})
-	if err == nil || !strings.Contains(err.Error(), `branch "dg" is already checked out by worktree at `+existingWorktree) {
+	if err == nil || !strings.Contains(err.Error(), `branch "dg" is already checked out by worktree at `+cleanAbsPath(existingWorktree)) {
 		t.Fatalf("expected existing worktree branch refusal, got %v", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(h.Workspace, "service-dg")); !os.IsNotExist(statErr) {
@@ -1367,8 +1466,8 @@ func TestDismissManagedWorktreeRefusesStaleManifestPathWhenBranchStillCheckedOut
 
 	err = app.Dismiss(h.Workspace, "acme/service/feature/worktree")
 	if err == nil ||
-		!strings.Contains(err.Error(), "branch feature/worktree for acme/service is already registered at "+worktreePath) ||
-		!strings.Contains(err.Error(), "but this workspace expects "+manifest.ManagedWorktrees[0].WorkspacePath) ||
+		!strings.Contains(err.Error(), "branch feature/worktree for acme/service is already registered at "+cleanAbsPath(worktreePath)) ||
+		!strings.Contains(err.Error(), "but this workspace expects "+cleanAbsPath(manifest.ManagedWorktrees[0].WorkspacePath)) ||
 		!strings.Contains(err.Error(), "changes") {
 		t.Fatalf("expected stale path dirty worktree refusal, got %v", err)
 	}
@@ -2356,6 +2455,94 @@ func appRunnerWithFakeCommands(t *testing.T, h *testutil.Harness, names ...strin
 	}}
 }
 
+func assertManagedGitignorePaths(t *testing.T, primaryRoot string, want ...string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(primaryRoot, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	text := string(data)
+	const beginMarker = "# BEGIN WSFOLD MANAGED WORKSPACE PATHS"
+	const endMarker = "# END WSFOLD MANAGED WORKSPACE PATHS"
+	begin := strings.Index(text, beginMarker)
+	end := strings.Index(text, endMarker)
+	if begin < 0 || end < 0 || end < begin {
+		t.Fatalf("expected managed .gitignore block, got:\n%s", text)
+	}
+	block := text[begin+len(beginMarker) : end]
+	got := make([]string, 0)
+	for _, line := range strings.Split(block, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			got = append(got, line)
+		}
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("unexpected managed .gitignore paths\ngot:  %q\nwant: %q\nfull .gitignore:\n%s", got, want, text)
+	}
+}
+
+func assertNoManagedGitignoreBlock(t *testing.T, primaryRoot string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(primaryRoot, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	text := string(data)
+	for _, marker := range []string{"# BEGIN WSFOLD MANAGED WORKSPACE PATHS", "# END WSFOLD MANAGED WORKSPACE PATHS"} {
+		if strings.Contains(text, marker) {
+			t.Fatalf("expected managed .gitignore block to be removed, got:\n%s", text)
+		}
+	}
+}
+
+func assertGitignoreContains(t *testing.T, primaryRoot string, substring string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(primaryRoot, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+	if !strings.Contains(string(data), substring) {
+		t.Fatalf("expected .gitignore to contain %q, got:\n%s", substring, string(data))
+	}
+}
+
+func assertPrimaryStatusOmits(t *testing.T, h *testutil.Harness, paths ...string) {
+	t.Helper()
+	status := h.RunGit(h.Workspace, "status", "--porcelain")
+	for _, path := range paths {
+		for _, line := range strings.Split(status, "\n") {
+			if strings.HasSuffix(line, " "+path) || strings.Contains(line, " "+path+"/") {
+				t.Fatalf("primary git status should not report %s, got:\n%s", path, status)
+			}
+		}
+	}
+}
+
+func assertGitInfoExcludeUnchanged(t *testing.T, excludePath string, before []byte) {
+	t.Helper()
+	after, err := os.ReadFile(excludePath)
+	if err != nil {
+		t.Fatalf("read .git/info/exclude after: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf(".git/info/exclude should remain unchanged\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+func assertWorkspaceDoesNotCreateExcludes(t *testing.T, primaryRoot string) {
+	t.Helper()
+	data, err := os.ReadFile(workspacePath(primaryRoot))
+	if err != nil {
+		t.Fatalf("read workspace file: %v", err)
+	}
+	for _, forbidden := range []string{`"files.exclude"`, `"files.watcherExclude"`, `"search.exclude"`} {
+		if strings.Contains(string(data), forbidden) {
+			t.Fatalf("workspace should not create VS Code exclude setting %s:\n%s", forbidden, string(data))
+		}
+	}
+}
+
 func TestSummonCustomProjectsDirStillMountsUnderSubdir(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnvWithProjectsDir(t, h, "_ctx")
@@ -2535,7 +2722,7 @@ func assertManagedWorktreeControlPath(t *testing.T, primaryPath string, worktree
 	if err != nil {
 		t.Fatalf("read managed worktree admin backref: %v", err)
 	}
-	if got, want := filepath.Clean(strings.TrimSpace(string(backref))), filepath.Clean(filepath.Join(worktreePath, ".git")); got != want {
+	if got, want := filepath.Clean(strings.TrimSpace(string(backref))), filepath.Clean(filepath.Join(worktreePath, ".git")); !sameFilesystemPath(got, want) {
 		t.Fatalf("unexpected worktree admin backref: got %s want %s", got, want)
 	}
 }

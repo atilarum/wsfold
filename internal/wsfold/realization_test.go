@@ -213,7 +213,7 @@ func TestInspectManagedWorktreeRealizationDoesNotStatusUnavailableRegisteredPath
 		if strings.Join(args, " ") == "worktree list --porcelain" {
 			return fmt.Sprintf("worktree %s\nHEAD abc123\nbranch refs/heads/main\n\nworktree %s\nHEAD def456\nbranch refs/heads/feature/host\nprunable gitdir file points to non-existent location\n", repoPath, unavailablePath), nil
 		}
-		if filepath.Clean(dir) == filepath.Clean(unavailablePath) && strings.Join(args, " ") == "status --porcelain" {
+		if sameFilesystemPath(dir, unavailablePath) && strings.Join(args, " ") == "status --porcelain" {
 			t.Fatalf("unavailable registered worktree path must not be inspected with git status")
 		}
 		return "", nil
@@ -224,8 +224,8 @@ func TestInspectManagedWorktreeRealizationDoesNotStatusUnavailableRegisteredPath
 		t.Fatalf("unavailable registered path should be invalid without status inspection, got %#v", got)
 	}
 	for _, snippet := range []string{
-		"branch feature/host for acme/service is already registered at " + unavailablePath,
-		"but this workspace expects " + worktree.WorkspacePath,
+		"branch feature/host for acme/service is already registered at " + cleanAbsPath(unavailablePath),
+		"but this workspace expects " + cleanAbsPath(worktree.WorkspacePath),
 		"The registered path is not available from this environment.",
 	} {
 		if !strings.Contains(got.Reason, snippet) {
@@ -277,7 +277,7 @@ func TestInspectManagedWorktreeRealizationReportsDifferentRegisteredPathWithoutO
 		case "worktree list --porcelain":
 			return fmt.Sprintf("worktree %s\nHEAD abc123\nbranch refs/heads/main\n\nworktree %s\nHEAD def456\nbranch refs/heads/feature/clean\n", repoPath, registeredPath), nil
 		case "status --porcelain":
-			if filepath.Clean(dir) != filepath.Clean(registeredPath) {
+			if !sameFilesystemPath(dir, registeredPath) {
 				t.Fatalf("unexpected status dir %s", dir)
 			}
 			return "", nil
@@ -290,7 +290,7 @@ func TestInspectManagedWorktreeRealizationReportsDifferentRegisteredPathWithoutO
 	if got.Status != RealizationInvalid || got.Inspection.State != ManagedWorktreeInvalidControlPath {
 		t.Fatalf("different registered path should be invalid, got %#v", got)
 	}
-	want := "branch feature/clean for acme/service is already registered at " + registeredPath + ", but this workspace expects " + worktree.WorkspacePath + "."
+	want := "branch feature/clean for acme/service is already registered at " + cleanAbsPath(registeredPath) + ", but this workspace expects " + cleanAbsPath(worktree.WorkspacePath) + "."
 	if got.Reason != want {
 		t.Fatalf("different registered path reason mismatch\nwant: %q\ngot:  %q", want, got.Reason)
 	}

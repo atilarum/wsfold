@@ -108,7 +108,7 @@ func inspectMissingManagedWorktree(result ManagedWorktreeInspection, entry Manag
 	}
 
 	actualPath := strings.TrimSpace(worktreePaths[entry.Branch])
-	if actualPath != "" && filepath.Clean(actualPath) != filepath.Clean(entry.WorkspacePath) {
+	if actualPath != "" && !sameFilesystemPath(actualPath, entry.WorkspacePath) {
 		if _, err := os.Stat(actualPath); err != nil {
 			if os.IsNotExist(err) {
 				result.State = ManagedWorktreeInvalidControlPath
@@ -141,7 +141,7 @@ func inspectMissingManagedWorktree(result ManagedWorktreeInspection, entry Manag
 }
 
 func registeredAtDifferentPathReason(entry ManagedWorktreeEntry, actualPath string, detail string) string {
-	base := fmt.Sprintf("branch %s for %s is already registered at %s, but this workspace expects %s.", entry.Branch, entry.PrimaryRepoRef, actualPath, entry.WorkspacePath)
+	base := fmt.Sprintf("branch %s for %s is already registered at %s, but this workspace expects %s.", entry.Branch, entry.PrimaryRepoRef, displayPathLikeReference(actualPath, entry.WorkspacePath), displayAbsPath(entry.WorkspacePath))
 	if strings.TrimSpace(detail) == "" {
 		return base
 	}
@@ -194,7 +194,7 @@ func validateManagedWorktreeControlPath(entry ManagedWorktreeEntry, primary Entr
 	}
 	expected := filepath.Clean(filepath.Join(entry.WorkspacePath, ".git"))
 	got := filepath.Clean(strings.TrimSpace(string(backref)))
-	if got != expected {
+	if !sameFilesystemPath(got, expected) {
 		return "", "", fmt.Errorf("worktree admin back-reference %s points to %s, want %s", backrefPath, got, expected)
 	}
 
@@ -219,6 +219,45 @@ func readWorktreeGitDir(worktreePath string) (string, error) {
 		gitDir = filepath.Join(worktreePath, gitDir)
 	}
 	return filepath.Clean(gitDir), nil
+}
+
+func sameFilesystemPath(a string, b string) bool {
+	a = filepath.Clean(a)
+	b = filepath.Clean(b)
+	if a == b {
+		return true
+	}
+	resolvedA, errA := filepath.EvalSymlinks(a)
+	resolvedB, errB := filepath.EvalSymlinks(b)
+	if errA == nil && errB == nil && filepath.Clean(resolvedA) == filepath.Clean(resolvedB) {
+		return true
+	}
+	canonicalA, errA := canonicalPathWithExistingParent(a)
+	canonicalB, errB := canonicalPathWithExistingParent(b)
+	return errA == nil && errB == nil && canonicalA == canonicalB
+}
+
+func canonicalPathWithExistingParent(path string) (string, error) {
+	path = filepath.Clean(path)
+	rest := []string{}
+	for {
+		if _, err := os.Stat(path); err == nil {
+			resolved, resolveErr := filepath.EvalSymlinks(path)
+			if resolveErr != nil {
+				return "", resolveErr
+			}
+			parts := append([]string{resolved}, rest...)
+			return filepath.Clean(filepath.Join(parts...)), nil
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return "", os.ErrNotExist
+		}
+		rest = append([]string{filepath.Base(path)}, rest...)
+		path = parent
+	}
 }
 
 func pathHasAnyPrefix(path string, roots []string) bool {

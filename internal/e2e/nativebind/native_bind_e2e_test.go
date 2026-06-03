@@ -77,8 +77,11 @@ func TestLinuxNativeBindLifecycle(t *testing.T) {
 		t.Fatalf("product: expected %s to be an active native bind mount", mountPath)
 	}
 	assertFileContains(t, filepath.Join(workspace, ".wsfold", "cache.yaml"), "backend: linux-native-bind")
+	assertFileContains(t, filepath.Join(workspace, ".gitignore"), "# BEGIN WSFOLD MANAGED WORKSPACE PATHS")
+	assertFileContains(t, filepath.Join(workspace, ".gitignore"), "/service")
 	assertFileContains(t, filepath.Join(workspace, "workspace.code-workspace"), `"path": "service"`)
 	assertFileNotContains(t, filepath.Join(workspace, "workspace.code-workspace"), source)
+	assertGitStatusOmits(t, workspace, env, "service")
 
 	writeFile(t, filepath.Join(source, "source.txt"), "from-source\n")
 	assertFileContains(t, filepath.Join(mountPath, "source.txt"), "from-source")
@@ -102,6 +105,7 @@ func TestLinuxNativeBindLifecycle(t *testing.T) {
 		t.Fatalf("product: busy dismiss should preserve active mountpoint: %s", mountPath)
 	}
 	assertFileContains(t, filepath.Join(workspace, ".wsfold", "cache.yaml"), "backend: linux-native-bind")
+	assertFileContains(t, filepath.Join(workspace, ".gitignore"), "/service")
 	assertFileContains(t, filepath.Join(workspace, "workspace.code-workspace"), `"path": "service"`)
 
 	runProduct(t, workspace, env, wsfold, "dismiss", "service")
@@ -114,6 +118,8 @@ func TestLinuxNativeBindLifecycle(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(source, ".git")); err != nil {
 		t.Fatalf("product: source checkout was deleted by dismiss: %v", err)
 	}
+	assertFileNotContains(t, filepath.Join(workspace, ".gitignore"), "/service")
+	assertFileNotContains(t, filepath.Join(workspace, ".gitignore"), "# BEGIN WSFOLD MANAGED WORKSPACE PATHS")
 	assertFileNotContains(t, filepath.Join(workspace, "workspace.code-workspace"), `"path": "service"`)
 
 	for _, tc := range []struct {
@@ -312,6 +318,16 @@ func assertFileNotContains(t *testing.T, path string, substring string) {
 	}
 	if strings.Contains(string(data), substring) {
 		t.Fatalf("product: expected %s not to contain %q\n%s", path, substring, string(data))
+	}
+}
+
+func assertGitStatusOmits(t *testing.T, dir string, env []string, path string) {
+	t.Helper()
+	status := runProduct(t, dir, env, "git", "status", "--porcelain")
+	for _, line := range strings.Split(status, "\n") {
+		if strings.HasSuffix(line, " "+path) || strings.Contains(line, " "+path+"/") {
+			t.Fatalf("product: primary git status should not report %s, got:\n%s", path, status)
+		}
 	}
 }
 
