@@ -141,7 +141,7 @@ func inspectMissingManagedWorktree(result ManagedWorktreeInspection, entry Manag
 }
 
 func registeredAtDifferentPathReason(entry ManagedWorktreeEntry, actualPath string, detail string) string {
-	base := fmt.Sprintf("branch %s for %s is already registered at %s, but this workspace expects %s.", entry.Branch, entry.PrimaryRepoRef, cleanAbsPath(actualPath), cleanAbsPath(entry.WorkspacePath))
+	base := fmt.Sprintf("branch %s for %s is already registered at %s, but this workspace expects %s.", entry.Branch, entry.PrimaryRepoRef, displayPathLikeReference(actualPath, entry.WorkspacePath), displayAbsPath(entry.WorkspacePath))
 	if strings.TrimSpace(detail) == "" {
 		return base
 	}

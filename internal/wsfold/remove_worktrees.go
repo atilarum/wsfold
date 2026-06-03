@@ -328,12 +328,13 @@ func parseGitWorktreePorcelainZ(output string) []gitWorktreePorcelainRecord {
 }
 
 func classifyExternalWorktreeRow(runner Runner, primaryRoot string, manifest Manifest, repo Repo, record gitWorktreePorcelainRecord) ExternalWorktreeRow {
-	normalizedPath := cleanAbsPath(record.Path)
+	displayPath := displayExternalWorktreePath(primaryRoot, repo, record.Path)
+	normalizedPath := cleanAbsPath(displayPath)
 	row := ExternalWorktreeRow{
 		ID:                  externalWorktreeRowID(repo.CheckoutPath, normalizedPath),
 		Repository:          repo.DisplayRef(),
 		PrimaryCheckoutPath: displayAbsPath(repo.CheckoutPath),
-		WorktreePath:        record.Path,
+		WorktreePath:        displayPath,
 		NormalizedPath:      normalizedPath,
 		RealPath:            bestEffortRealPath(record.Path),
 		Branch:              strings.TrimSpace(record.Branch),
@@ -481,10 +482,10 @@ func revalidatePrimaryCheckoutAvailable(row ExternalWorktreeRow) error {
 func markAmbiguousExternalWorktreeRows(rows []ExternalWorktreeRow) {
 	byPath := map[string]int{}
 	for _, row := range rows {
-		byPath[row.NormalizedPath]++
+		byPath[externalWorktreeComparisonPath(row)]++
 	}
 	for i := range rows {
-		if byPath[rows[i].NormalizedPath] <= 1 {
+		if byPath[externalWorktreeComparisonPath(rows[i])] <= 1 {
 			continue
 		}
 		if rows[i].Lifecycle == ExternalWorktreePrimaryCheckout {
@@ -503,9 +504,8 @@ func externalWorktreeRowID(primaryCheckoutPath string, worktreePath string) stri
 }
 
 func manifestManagedWorktreeForPath(manifest Manifest, path string) (ManagedWorktreeEntry, bool) {
-	clean := cleanAbsPath(path)
 	for _, entry := range manifest.ManagedWorktrees {
-		if cleanAbsPath(entry.WorkspacePath) == clean {
+		if samePath(entry.WorkspacePath, path) {
 			return entry, true
 		}
 	}
@@ -520,22 +520,54 @@ func cleanAbsPath(path string) string {
 	if err != nil {
 		return filepath.Clean(path)
 	}
-	clean := filepath.Clean(abs)
-	if canonical, err := canonicalPathWithExistingParent(clean); err == nil {
-		return canonical
-	}
-	return clean
+	return filepath.Clean(abs)
 }
 
 func displayAbsPath(path string) string {
-	if path == "" {
-		return ""
+	return cleanAbsPath(path)
+}
+
+func displayPathLikeReference(path string, reference string) string {
+	displayPath := displayAbsPath(path)
+	displayReference := displayAbsPath(reference)
+	if displayPath == "" || displayReference == "" {
+		return displayPath
 	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return filepath.Clean(path)
+	if samePath(displayPath, displayReference) {
+		return displayReference
 	}
-	return filepath.Clean(abs)
+
+	referencePrefixes := map[string]string{}
+	for referencePrefix := displayReference; ; referencePrefix = filepath.Dir(referencePrefix) {
+		canonical := canonicalAbsPath(referencePrefix)
+		if _, exists := referencePrefixes[canonical]; !exists {
+			referencePrefixes[canonical] = referencePrefix
+		}
+		parent := filepath.Dir(referencePrefix)
+		if parent == referencePrefix {
+			break
+		}
+	}
+	for pathPrefix := displayPath; ; pathPrefix = filepath.Dir(pathPrefix) {
+		if referencePrefix, ok := referencePrefixes[canonicalAbsPath(pathPrefix)]; ok {
+			rel, err := filepath.Rel(pathPrefix, displayPath)
+			if err == nil {
+				return filepath.Clean(filepath.Join(referencePrefix, rel))
+			}
+		}
+		parent := filepath.Dir(pathPrefix)
+		if parent == pathPrefix {
+			break
+		}
+	}
+	return displayPath
+}
+
+func displayExternalWorktreePath(primaryRoot string, repo Repo, path string) string {
+	if pathInside(primaryRoot, path) {
+		return displayPathLikeReference(path, primaryRoot)
+	}
+	return displayPathLikeReference(path, repo.CheckoutPath)
 }
 
 func bestEffortRealPath(path string) string {
@@ -547,7 +579,7 @@ func bestEffortRealPath(path string) string {
 }
 
 func samePath(left string, right string) bool {
-	return cleanAbsPath(left) == cleanAbsPath(right)
+	return canonicalAbsPath(left) == canonicalAbsPath(right)
 }
 
 func pathExists(path string) bool {
@@ -556,9 +588,24 @@ func pathExists(path string) bool {
 }
 
 func pathInside(root string, path string) bool {
-	rel, err := filepath.Rel(cleanAbsPath(root), cleanAbsPath(path))
+	rel, err := filepath.Rel(canonicalAbsPath(root), canonicalAbsPath(path))
 	if err != nil {
 		return false
 	}
 	return rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." && !filepath.IsAbs(rel))
+}
+
+func externalWorktreeComparisonPath(row ExternalWorktreeRow) string {
+	if strings.TrimSpace(row.WorktreePath) != "" {
+		return canonicalAbsPath(row.WorktreePath)
+	}
+	return canonicalAbsPath(row.NormalizedPath)
+}
+
+func canonicalAbsPath(path string) string {
+	clean := cleanAbsPath(path)
+	if canonical, err := canonicalPathWithExistingParent(clean); err == nil {
+		return canonical
+	}
+	return clean
 }
