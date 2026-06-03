@@ -169,7 +169,7 @@ func runtimeManifestFromWorkspace(primaryRoot string, workspaceManifest Workspac
 	for _, entry := range cache.External {
 		externalCache[normalizeRepoRef(entry.Ref)] = entry
 	}
-	localIndex := lazyRepoIndex{runner: runner}
+	localResolver := lazyRepoResolver{runner: runner}
 
 	manifest := Manifest{
 		Version:          manifestVersion,
@@ -185,16 +185,12 @@ func runtimeManifestFromWorkspace(primaryRoot string, workspaceManifest Workspac
 		var resolutionDetail string
 		cacheInferred := false
 		if strings.TrimSpace(cacheEntry.CheckoutPath) == "" {
-			if idx, err := localIndex.get(); err == nil {
-				if repo, err := idx.Resolve(entry.Ref, TrustClassTrusted); err == nil && !repo.IsWorktree {
-					cacheEntry.Ref = entry.Ref
-					cacheEntry.CheckoutPath = repo.CheckoutPath
-					cacheInferred = true
-				} else if err != nil {
-					resolutionDetail = fmt.Sprintf("cache missing for %s; %v", entry.Ref, err)
-				}
+			if repo, err := localResolver.resolve(entry.Ref, TrustClassTrusted); err == nil && !repo.IsWorktree {
+				cacheEntry.Ref = entry.Ref
+				cacheEntry.CheckoutPath = repo.CheckoutPath
+				cacheInferred = true
 			} else if err != nil {
-				resolutionDetail = fmt.Sprintf("cache missing for %s; local repository roots are unavailable: %v", entry.Ref, err)
+				resolutionDetail = fmt.Sprintf("cache missing for %s; %v", entry.Ref, err)
 			}
 		}
 		backend := cacheEntry.Backend
@@ -229,16 +225,12 @@ func runtimeManifestFromWorkspace(primaryRoot string, workspaceManifest Workspac
 		var resolutionDetail string
 		cacheInferred := false
 		if strings.TrimSpace(cacheEntry.CheckoutPath) == "" {
-			if idx, err := localIndex.get(); err == nil {
-				if repo, err := idx.Resolve(entry.Ref, TrustClassExternal); err == nil && !repo.IsWorktree {
-					cacheEntry.Ref = entry.Ref
-					cacheEntry.CheckoutPath = repo.CheckoutPath
-					cacheInferred = true
-				} else if err != nil {
-					resolutionDetail = fmt.Sprintf("cache missing for %s; %v", entry.Ref, err)
-				}
+			if repo, err := localResolver.resolve(entry.Ref, TrustClassExternal); err == nil && !repo.IsWorktree {
+				cacheEntry.Ref = entry.Ref
+				cacheEntry.CheckoutPath = repo.CheckoutPath
+				cacheInferred = true
 			} else if err != nil {
-				resolutionDetail = fmt.Sprintf("cache missing for %s; local repository roots are unavailable: %v", entry.Ref, err)
+				resolutionDetail = fmt.Sprintf("cache missing for %s; %v", entry.Ref, err)
 			}
 		}
 		runtime := Entry{
@@ -275,31 +267,34 @@ func runtimeManifestFromWorkspace(primaryRoot string, workspaceManifest Workspac
 	return manifest
 }
 
-type lazyRepoIndex struct {
+type lazyRepoResolver struct {
 	runner Runner
 	loaded bool
-	index  *RepoIndex
+	cfg    Config
 	err    error
 }
 
-func (l *lazyRepoIndex) get() (*RepoIndex, error) {
+func (l *lazyRepoResolver) resolve(ref string, requested TrustClass) (Repo, error) {
+	cfg, err := l.getConfig()
+	if err != nil {
+		return Repo{}, err
+	}
+	return resolveExistingRepo(cfg, l.runner, ref, requested)
+}
+
+func (l *lazyRepoResolver) getConfig() (Config, error) {
 	if l.loaded {
-		return l.index, l.err
+		return l.cfg, l.err
 	}
 	l.loaded = true
 
 	cfg, err := LoadConfig()
 	if err != nil {
 		l.err = fmt.Errorf("load config: %w", err)
-		return nil, l.err
+		return Config{}, l.err
 	}
-	idx, err := DiscoverRepositories(cfg, l.runner)
-	if err != nil {
-		l.err = fmt.Errorf("discover repositories: %w", err)
-		return nil, l.err
-	}
-	l.index = &idx
-	return l.index, nil
+	l.cfg = cfg
+	return l.cfg, nil
 }
 
 func workspaceManifestAndCacheFromRuntime(primaryRoot string, manifest Manifest) (WorkspaceManifest, WorkspaceCache) {

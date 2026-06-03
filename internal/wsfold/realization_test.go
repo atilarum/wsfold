@@ -1,8 +1,10 @@
 package wsfold
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/atilarum/wsfold/internal/testutil"
@@ -169,5 +171,127 @@ func TestInspectManagedWorktreeRealizationInvalidPrimaryResolutionIsNotRecoverab
 	got := InspectManagedWorktreeRealization(manifest, worktree, Runner{})
 	if got.Status != RealizationInvalid {
 		t.Fatalf("invalid primary resolution should not make managed worktree recoverable, got %#v", got)
+	}
+}
+
+func TestInspectManagedWorktreeRealizationDoesNotStatusUnavailableRegisteredPath(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	mountPath := filepath.Join(h.Workspace, "service")
+	if err := os.Symlink(repoPath, mountPath); err != nil {
+		t.Fatalf("create primary symlink: %v", err)
+	}
+
+	unavailablePath := filepath.Join(h.Root, "host-root", "service-feature-host")
+	primary := Entry{
+		RepoRef:      "acme/service",
+		CheckoutPath: repoPath,
+		TrustClass:   TrustClassTrusted,
+		Backend:      AttachmentBackendSymlink,
+		MountPath:    mountPath,
+	}
+	worktree := ManagedWorktreeEntry{
+		RepoRef:             "acme/service/feature/host",
+		Branch:              "feature/host",
+		WorkspacePath:       filepath.Join(h.Workspace, "service-feature-host"),
+		PrimaryRepoRef:      primary.RepoRef,
+		PrimaryCheckoutPath: primary.CheckoutPath,
+		PrimaryMountPath:    primary.MountPath,
+		ControlMode:         WorktreeControlWorkspaceMountedPrimary,
+		Owner:               ManagedWorktreeOwnerWSFold,
+	}
+	manifest := Manifest{
+		Version:          manifestVersion,
+		PrimaryRoot:      h.Workspace,
+		Trusted:          []Entry{primary},
+		ManagedWorktrees: []ManagedWorktreeEntry{worktree},
+	}
+	runner := Runner{ExecCommand: func(name string, dir string, env []string, args ...string) (string, error) {
+		if strings.Join(args, " ") == "worktree list --porcelain" {
+			return fmt.Sprintf("worktree %s\nHEAD abc123\nbranch refs/heads/main\n\nworktree %s\nHEAD def456\nbranch refs/heads/feature/host\nprunable gitdir file points to non-existent location\n", repoPath, unavailablePath), nil
+		}
+		if filepath.Clean(dir) == filepath.Clean(unavailablePath) && strings.Join(args, " ") == "status --porcelain" {
+			t.Fatalf("unavailable registered worktree path must not be inspected with git status")
+		}
+		return "", nil
+	}}
+
+	got := InspectManagedWorktreeRealization(manifest, worktree, runner)
+	if got.Status != RealizationInvalid || got.Inspection.State != ManagedWorktreeInvalidControlPath {
+		t.Fatalf("unavailable registered path should be invalid without status inspection, got %#v", got)
+	}
+	for _, snippet := range []string{
+		"branch feature/host for acme/service is already registered at " + unavailablePath,
+		"but this workspace expects " + worktree.WorkspacePath,
+		"The registered path is not available from this environment.",
+	} {
+		if !strings.Contains(got.Reason, snippet) {
+			t.Fatalf("expected diagnostic to contain %q, got %q", snippet, got.Reason)
+		}
+	}
+}
+
+func TestInspectManagedWorktreeRealizationReportsDifferentRegisteredPathWithoutOptionalDetail(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	mountPath := filepath.Join(h.Workspace, "service")
+	if err := os.Symlink(repoPath, mountPath); err != nil {
+		t.Fatalf("create primary symlink: %v", err)
+	}
+
+	registeredPath := filepath.Join(h.Root, "other", "service-feature-clean")
+	if err := os.MkdirAll(registeredPath, 0o755); err != nil {
+		t.Fatalf("mkdir registered path: %v", err)
+	}
+	primary := Entry{
+		RepoRef:      "acme/service",
+		CheckoutPath: repoPath,
+		TrustClass:   TrustClassTrusted,
+		Backend:      AttachmentBackendSymlink,
+		MountPath:    mountPath,
+	}
+	worktree := ManagedWorktreeEntry{
+		RepoRef:             "acme/service/feature/clean",
+		Branch:              "feature/clean",
+		WorkspacePath:       filepath.Join(h.Workspace, "service-feature-clean"),
+		PrimaryRepoRef:      primary.RepoRef,
+		PrimaryCheckoutPath: primary.CheckoutPath,
+		PrimaryMountPath:    primary.MountPath,
+		ControlMode:         WorktreeControlWorkspaceMountedPrimary,
+		Owner:               ManagedWorktreeOwnerWSFold,
+	}
+	manifest := Manifest{
+		Version:          manifestVersion,
+		PrimaryRoot:      h.Workspace,
+		Trusted:          []Entry{primary},
+		ManagedWorktrees: []ManagedWorktreeEntry{worktree},
+	}
+	runner := Runner{ExecCommand: func(name string, dir string, env []string, args ...string) (string, error) {
+		switch strings.Join(args, " ") {
+		case "worktree list --porcelain":
+			return fmt.Sprintf("worktree %s\nHEAD abc123\nbranch refs/heads/main\n\nworktree %s\nHEAD def456\nbranch refs/heads/feature/clean\n", repoPath, registeredPath), nil
+		case "status --porcelain":
+			if filepath.Clean(dir) != filepath.Clean(registeredPath) {
+				t.Fatalf("unexpected status dir %s", dir)
+			}
+			return "", nil
+		default:
+			return "", nil
+		}
+	}}
+
+	got := InspectManagedWorktreeRealization(manifest, worktree, runner)
+	if got.Status != RealizationInvalid || got.Inspection.State != ManagedWorktreeInvalidControlPath {
+		t.Fatalf("different registered path should be invalid, got %#v", got)
+	}
+	want := "branch feature/clean for acme/service is already registered at " + registeredPath + ", but this workspace expects " + worktree.WorkspacePath + "."
+	if got.Reason != want {
+		t.Fatalf("different registered path reason mismatch\nwant: %q\ngot:  %q", want, got.Reason)
 	}
 }
