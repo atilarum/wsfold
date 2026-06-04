@@ -25,6 +25,30 @@ const (
 	claudeLocalConfigRel  = ".claude/settings.local.json"
 )
 
+type trustedAgentAccessUpdateError struct {
+	err error
+}
+
+func (e trustedAgentAccessUpdateError) Error() string {
+	return e.err.Error()
+}
+
+func (e trustedAgentAccessUpdateError) Unwrap() error {
+	return e.err
+}
+
+func markTrustedAgentAccessUpdateError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return trustedAgentAccessUpdateError{err: err}
+}
+
+func isTrustedAgentAccessUpdateError(err error) bool {
+	var marked trustedAgentAccessUpdateError
+	return errors.As(err, &marked)
+}
+
 func agentAccessEnabled() bool {
 	return os.Getenv(envAddAgentDirs) != "false"
 }
@@ -147,7 +171,7 @@ func (a *App) ensureCodexAccess(primaryRoot string, repoRef string, root string)
 	if scope == agentAccessScopeHome && changed {
 		_, _ = fmt.Fprintf(a.Stderr, "Warning: WSFold added Codex writable root %s to %s. WSFold will not remove global Codex roots automatically on dismiss; remove the root manually if it should stop being trusted.\n", root, configPath)
 	}
-	if alreadyPresent && !hasAgentAccessRecord(primaryRoot, agentCodex, scope, configPath, repoRef, root) {
+	if alreadyPresent && scope != agentAccessScopeHome && !hasAgentAccessRecord(primaryRoot, agentCodex, scope, configPath, repoRef, root) {
 		return nil
 	}
 	return upsertAgentAccessRecord(primaryRoot, AgentAccessEntry{
@@ -551,7 +575,13 @@ func parseCodexWritableRootsSection(path string, section []string) ([]string, []
 	rootsLine := -1
 	for i, line := range section {
 		key, ok := tomlAssignmentKey(line)
-		if ok && key == "writable_roots" {
+		if !ok {
+			continue
+		}
+		if isQuotedCodexWritableRootsKey(key) {
+			return nil, nil, fmt.Errorf("unsupported Codex config %s: writable_roots must use a simple bare key", path)
+		}
+		if key == "writable_roots" {
 			if rootsLine != -1 {
 				return nil, nil, fmt.Errorf("unsupported Codex config %s: duplicate sandbox_workspace_write.writable_roots", path)
 			}
@@ -601,6 +631,11 @@ func tomlAssignmentKey(line string) (string, bool) {
 		return "", false
 	}
 	return key, true
+}
+
+func isQuotedCodexWritableRootsKey(key string) bool {
+	key = strings.TrimSpace(key)
+	return key == `"writable_roots"` || key == `'writable_roots'`
 }
 
 func isCodexSandboxWorkspaceAssignmentKey(key string) bool {

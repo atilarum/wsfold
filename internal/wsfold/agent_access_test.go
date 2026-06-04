@@ -160,6 +160,18 @@ func TestAgentAccessCodexHomeFallbackWarnsAndDismissDoesNotMutateHome(t *testing
 	if !strings.Contains(stderr.String(), homeCodex) || !strings.Contains(stderr.String(), root) {
 		t.Fatalf("expected home fallback cleanup reminder, got:\n%s", stderr.String())
 	}
+
+	stderr.Reset()
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("second Summon returned error: %v", err)
+	}
+	stderr.Reset()
+	if err := app.Dismiss(h.Workspace, "service"); err != nil {
+		t.Fatalf("second Dismiss returned error: %v", err)
+	}
+	if !strings.Contains(stderr.String(), homeCodex) || !strings.Contains(stderr.String(), root) {
+		t.Fatalf("expected second home fallback cleanup reminder, got:\n%s", stderr.String())
+	}
 }
 
 func TestAgentAccessCodexProjectConfigCanBeLocalOnlyThroughGlobalExcludes(t *testing.T) {
@@ -245,6 +257,14 @@ func TestCodexWritableRootsFailClosedForExistingInlineOrDottedTable(t *testing.T
 		{
 			name:   "array-table",
 			before: "[[sandbox_workspace_write]]\nwritable_roots = [\"/user/root\"]\n",
+		},
+		{
+			name:   "quoted-writable-roots-key",
+			before: "[sandbox_workspace_write]\n\"writable_roots\" = [\"/user/root\"]\n",
+		},
+		{
+			name:   "literal-writable-roots-key",
+			before: "[sandbox_workspace_write]\n'writable_roots' = [\"/user/root\"]\n",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
