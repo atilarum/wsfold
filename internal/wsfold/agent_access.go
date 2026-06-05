@@ -693,12 +693,12 @@ func parseCodexWritableRootsSection(path string, section []string) ([]string, []
 
 	end := rootsLine
 	arrayText := rhs
-	if strings.HasPrefix(rhs, "[") && !strings.Contains(rhs, "]") {
+	if strings.HasPrefix(rhs, "[") && !tomlArrayTextClosed(rhs) {
 		for end+1 < len(section) {
 			end++
 			line := stripTomlLineComment(section[end])
 			arrayText += "\n" + strings.TrimSpace(line)
-			if strings.Contains(line, "]") {
+			if tomlArrayTextClosed(arrayText) {
 				break
 			}
 		}
@@ -727,6 +727,24 @@ func tomlAssignmentKey(line string) (string, bool) {
 func isQuotedCodexWritableRootsKey(key string) bool {
 	key = strings.TrimSpace(key)
 	return key == `"writable_roots"` || key == `'writable_roots'`
+}
+
+func tomlArrayTextClosed(raw string) bool {
+	inString := false
+	escaped := false
+	for i := 0; i < len(raw); i++ {
+		switch {
+		case escaped:
+			escaped = false
+		case inString && raw[i] == '\\':
+			escaped = true
+		case raw[i] == '"':
+			inString = !inString
+		case !inString && raw[i] == ']':
+			return true
+		}
+	}
+	return false
 }
 
 func isCodexSandboxWorkspaceAssignmentKey(key string) bool {
@@ -856,24 +874,19 @@ func renderCodexWritableRoots(roots []string) []string {
 	return out
 }
 
-func addClaudeAdditionalDirectory(path string, root string) (bool, bool, error) {
-	settings, changed, alreadyPresent, err := claudeAdditionalDirectoryUpdate(path, root)
-	if err != nil {
-		return false, false, err
-	}
-	if !changed {
-		return false, alreadyPresent, nil
-	}
-	return true, false, writeClaudeSettings(path, settings)
-}
-
 func claudeAdditionalDirectoryUpdate(path string, root string) (map[string]any, bool, bool, error) {
 	settings, err := readClaudeSettings(path)
 	if err != nil {
 		return nil, false, false, err
 	}
-	permissions := objectMap(settings["permissions"])
-	dirs := stringSlice(permissions["additionalDirectories"])
+	permissions, err := claudePermissionsObject(path, settings)
+	if err != nil {
+		return nil, false, false, err
+	}
+	dirs, err := claudeAdditionalDirectories(path, permissions)
+	if err != nil {
+		return nil, false, false, err
+	}
 	if containsExactString(dirs, root) {
 		return settings, false, true, nil
 	}
@@ -892,8 +905,14 @@ func removeClaudeAdditionalDirectory(path string, root string) error {
 	if err != nil {
 		return err
 	}
-	permissions := objectMap(settings["permissions"])
-	dirs := stringSlice(permissions["additionalDirectories"])
+	permissions, err := claudePermissionsObject(path, settings)
+	if err != nil {
+		return err
+	}
+	dirs, err := claudeAdditionalDirectories(path, permissions)
+	if err != nil {
+		return err
+	}
 	if !containsExactString(dirs, root) {
 		return nil
 	}
@@ -906,6 +925,41 @@ func removeClaudeAdditionalDirectory(path string, root string) error {
 	permissions["additionalDirectories"] = next
 	settings["permissions"] = permissions
 	return writeClaudeSettings(path, settings)
+}
+
+func claudePermissionsObject(path string, settings map[string]any) (map[string]any, error) {
+	value, ok := settings["permissions"]
+	if !ok || value == nil {
+		return map[string]any{}, nil
+	}
+	permissions, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("unsupported Claude settings %s: permissions must be an object", path)
+	}
+	return permissions, nil
+}
+
+func claudeAdditionalDirectories(path string, permissions map[string]any) ([]string, error) {
+	value, ok := permissions["additionalDirectories"]
+	if !ok || value == nil {
+		return []string{}, nil
+	}
+	if typed, ok := value.([]string); ok {
+		return append([]string(nil), typed...), nil
+	}
+	raw, ok := value.([]any)
+	if !ok {
+		return nil, fmt.Errorf("unsupported Claude settings %s: permissions.additionalDirectories must be a string array", path)
+	}
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		text, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("unsupported Claude settings %s: permissions.additionalDirectories must be a string array", path)
+		}
+		out = append(out, text)
+	}
+	return out, nil
 }
 
 func readClaudeSettings(path string) (map[string]any, error) {
@@ -939,30 +993,6 @@ func writeClaudeSettings(path string, settings map[string]any) error {
 		return fmt.Errorf("write Claude settings %s: %w", path, err)
 	}
 	return nil
-}
-
-func objectMap(value any) map[string]any {
-	if typed, ok := value.(map[string]any); ok {
-		return typed
-	}
-	return map[string]any{}
-}
-
-func stringSlice(value any) []string {
-	raw, ok := value.([]any)
-	if !ok {
-		if typed, ok := value.([]string); ok {
-			return append([]string(nil), typed...)
-		}
-		return []string{}
-	}
-	out := make([]string, 0, len(raw))
-	for _, item := range raw {
-		if text, ok := item.(string); ok {
-			out = append(out, text)
-		}
-	}
-	return out
 }
 
 func containsExactString(values []string, value string) bool {

@@ -422,6 +422,11 @@ func TestCodexWritableRootsParseInlineComments(t *testing.T) {
 			before:   "[sandbox_workspace_write]\nwritable_roots = [ # local roots\n  \"/user/root\", # owned by user\n] # end roots\n",
 			userRoot: "/user/root",
 		},
+		{
+			name:     "multi-line-bracket-in-string",
+			before:   "[sandbox_workspace_write]\nwritable_roots = [\n  \"/user/a]b\",\n]\n",
+			userRoot: "/user/a]b",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.toml")
@@ -433,6 +438,47 @@ func TestCodexWritableRootsParseInlineComments(t *testing.T) {
 			}
 			assertCodexRootsContain(t, path, tc.userRoot)
 			assertCodexRootsContain(t, path, "/trusted/root")
+		})
+	}
+}
+
+func TestClaudeAdditionalDirectoryRejectsUnsupportedShapesWithoutRewrite(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		before string
+	}{
+		{
+			name:   "permissions-not-object",
+			before: "{\"permissions\":\"read\"}\n",
+		},
+		{
+			name:   "additional-directories-not-array",
+			before: "{\"permissions\":{\"additionalDirectories\":\"/user/root\"}}\n",
+		},
+		{
+			name:   "additional-directories-has-non-string",
+			before: "{\"permissions\":{\"additionalDirectories\":[\"/user/root\",42]}}\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newAgentAccessHarness(t)
+			service := createTrustedRepo(t, h, "service")
+			path := filepath.Join(h.Workspace, ".claude", "settings.local.json")
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatalf("mkdir Claude settings dir: %v", err)
+			}
+			if err := os.WriteFile(path, []byte(tc.before), 0o644); err != nil {
+				t.Fatalf("write Claude settings: %v", err)
+			}
+
+			app := newAgentAccessApp(h)
+			err := app.ensureClaudeAccess(h.Workspace, "acme/service", mustRealPath(t, service))
+			if err == nil || !strings.Contains(err.Error(), "unsupported Claude settings") {
+				t.Fatalf("expected unsupported Claude settings error, got %v", err)
+			}
+			if got := mustReadString(t, path); got != tc.before {
+				t.Fatalf("unsupported Claude settings were rewritten:\nbefore:\n%s\nafter:\n%s", tc.before, got)
+			}
 		})
 	}
 }

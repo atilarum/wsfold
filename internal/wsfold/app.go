@@ -604,9 +604,6 @@ func (a *App) reconcileTrustedEntry(primaryRoot string, cfg Config, manifest Man
 				entry = recovered
 			}
 		}
-		if err := addManagedWorkspaceIgnorePath(primaryRoot, entry.MountPath); err != nil {
-			return RealizationUnmounted, err
-		}
 		if err := a.ensureTrustedAgentAccess(primaryRoot, entry); err != nil {
 			return RealizationUnmounted, markTrustedAgentAccessUpdateError(err)
 		}
@@ -735,6 +732,9 @@ func (a *App) reconcileManagedWorktree(primaryRoot string, cfg Config, manifest 
 		if err := a.recoverManagedWorktree(primaryRoot, cfg, manifest, entry, realization); err != nil {
 			return RealizationUnmounted, err
 		}
+		if err := addManagedWorkspaceIgnorePath(primaryRoot, entry.WorkspacePath); err != nil {
+			return RealizationUnmounted, err
+		}
 		_, _ = fmt.Fprintf(a.Stdout, "%s Managed worktree recovered: %s\n", ansiGreenBold+"✓"+ansiReset, ansiCyanBold+entry.RepoRef+ansiReset)
 		return RealizationUnmounted, nil
 	default:
@@ -758,7 +758,7 @@ func (a *App) recoverManagedWorktree(primaryRoot string, cfg Config, manifest Ma
 			if err := writeWorkspace(primaryRoot, previous, manifest, cfg.ProjectsDirName); err != nil {
 				return err
 			}
-			return addManagedWorkspaceIgnorePath(primaryRoot, entry.WorkspacePath)
+			return nil
 		}
 	}
 	if realization.Inspection.State != ManagedWorktreeMissing {
@@ -791,9 +791,6 @@ func (a *App) recoverManagedWorktree(primaryRoot string, cfg Config, manifest Ma
 		return fmt.Errorf("recovered worktree did not satisfy workspace-local control path contract: %w", err)
 	}
 	if err := writeWorkspace(primaryRoot, previous, manifest, cfg.ProjectsDirName); err != nil {
-		return err
-	}
-	if err := addManagedWorkspaceIgnorePath(primaryRoot, entry.WorkspacePath); err != nil {
 		return err
 	}
 	return nil
