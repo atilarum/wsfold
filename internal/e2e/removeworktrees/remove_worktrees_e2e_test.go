@@ -123,21 +123,7 @@ func requireRow(t *testing.T, rows []wsfold.ExternalWorktreeRow, path string, li
 }
 
 func samePath(left string, right string) bool {
-	return canonicalPath(left) == canonicalPath(right)
-}
-
-func canonicalPath(path string) string {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return filepath.Clean(path)
-	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		return filepath.Clean(resolved)
-	}
-	if strings.HasPrefix(abs, "/var/") {
-		return filepath.Clean("/private" + abs)
-	}
-	return filepath.Clean(abs)
+	return sameFilesystemPath(left, right)
 }
 
 func requireLifecycle(t *testing.T, rows []wsfold.ExternalWorktreeRow, lifecycle wsfold.ExternalWorktreeLifecycleClass, selectable bool) wsfold.ExternalWorktreeRow {

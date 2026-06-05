@@ -641,9 +641,5 @@ func externalWorktreeComparisonPath(row ExternalWorktreeRow) string {
 }
 
 func canonicalAbsPath(path string) string {
-	clean := cleanAbsPath(path)
-	if canonical, err := canonicalPathWithExistingParent(clean); err == nil {
-		return canonical
-	}
-	return clean
+	return cleanAbsPath(path)
 }

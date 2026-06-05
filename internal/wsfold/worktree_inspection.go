@@ -221,29 +221,6 @@ func readWorktreeGitDir(worktreePath string) (string, error) {
 	return filepath.Clean(gitDir), nil
 }
 
-func canonicalPathWithExistingParent(path string) (string, error) {
-	path = filepath.Clean(path)
-	rest := []string{}
-	for {
-		if _, err := os.Stat(path); err == nil {
-			resolved, resolveErr := filepath.EvalSymlinks(path)
-			if resolveErr != nil {
-				return "", resolveErr
-			}
-			parts := append([]string{resolved}, rest...)
-			return filepath.Clean(filepath.Join(parts...)), nil
-		} else if !os.IsNotExist(err) {
-			return "", err
-		}
-		parent := filepath.Dir(path)
-		if parent == path {
-			return "", os.ErrNotExist
-		}
-		rest = append([]string{filepath.Base(path)}, rest...)
-		path = parent
-	}
-}
-
 func pathHasAnyPrefix(path string, roots []string) bool {
 	path = filepath.Clean(path)
 	for _, root := range roots {
