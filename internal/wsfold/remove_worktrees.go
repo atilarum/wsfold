@@ -523,10 +523,31 @@ func cleanAbsPath(path string) string {
 	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
 		return filepath.Clean(resolved)
 	}
+	if resolved, ok := evalSymlinksThroughExistingParent(abs); ok {
+		return filepath.Clean(resolved)
+	}
 	if currentGOOS == "darwin" && strings.HasPrefix(abs, "/var/") {
 		return filepath.Clean("/private" + abs)
 	}
 	return filepath.Clean(abs)
+}
+
+func evalSymlinksThroughExistingParent(path string) (string, bool) {
+	path = filepath.Clean(path)
+	missing := []string{}
+	for {
+		parent := filepath.Dir(path)
+		if parent == path {
+			return "", false
+		}
+		missing = append([]string{filepath.Base(path)}, missing...)
+		resolved, err := filepath.EvalSymlinks(parent)
+		if err == nil {
+			parts := append([]string{resolved}, missing...)
+			return filepath.Join(parts...), true
+		}
+		path = parent
+	}
 }
 
 func cleanDisplayAbsPath(path string) string {

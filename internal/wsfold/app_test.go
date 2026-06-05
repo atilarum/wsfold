@@ -2432,6 +2432,7 @@ func setEnv(t *testing.T, h *testutil.Harness) {
 	}
 	t.Setenv("WSFOLD_PROJECTS_DIR", ".")
 	t.Setenv("WSFOLD_MOUNT_BACKEND", "symlink")
+	t.Setenv("HOME", filepath.Join(h.Root, "home"))
 }
 
 func setEnvWithProjectsDir(t *testing.T, h *testutil.Harness, projectsDir string) {
@@ -2442,6 +2443,7 @@ func setEnvWithProjectsDir(t *testing.T, h *testutil.Harness, projectsDir string
 	}
 	t.Setenv("WSFOLD_PROJECTS_DIR", projectsDir)
 	t.Setenv("WSFOLD_MOUNT_BACKEND", "symlink")
+	t.Setenv("HOME", filepath.Join(h.Root, "home"))
 }
 
 func appRunnerWithFakeCommands(t *testing.T, h *testutil.Harness, names ...string) Runner {

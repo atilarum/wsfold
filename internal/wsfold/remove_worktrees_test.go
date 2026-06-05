@@ -207,6 +207,30 @@ func TestExternalWorktreeAmbiguousRowsAreBlocked(t *testing.T) {
 	}
 }
 
+func TestCleanAbsPathCanonicalizesMissingLeafThroughExistingSymlinkParent(t *testing.T) {
+	root := t.TempDir()
+	realParent := filepath.Join(root, "real-parent")
+	if err := os.MkdirAll(realParent, 0o755); err != nil {
+		t.Fatalf("mkdir real parent: %v", err)
+	}
+	aliasParent := filepath.Join(root, "alias-parent")
+	if err := os.Symlink(realParent, aliasParent); err != nil {
+		t.Fatalf("create symlink parent: %v", err)
+	}
+
+	aliasMissing := filepath.Join(aliasParent, "missing-worktree")
+	realMissing := filepath.Join(realParent, "missing-worktree")
+	if cleanAbsPath(aliasMissing) != cleanAbsPath(realMissing) {
+		t.Fatalf("missing path under symlink parent did not canonicalize: alias=%q real=%q", cleanAbsPath(aliasMissing), cleanAbsPath(realMissing))
+	}
+	if !samePath(aliasMissing, realMissing) {
+		t.Fatalf("samePath should match missing leaf paths through existing symlink parent")
+	}
+	if !pathInside(aliasParent, realMissing) {
+		t.Fatalf("pathInside should match real child through symlink root")
+	}
+}
+
 func TestRemoveExternalWorktreesRemovesSelectedRowsAndPreservesBranches(t *testing.T) {
 	h := testutil.NewHarness(t)
 	applyHarnessEnv(t, h)

@@ -104,11 +104,7 @@ func (a *App) SummonAll(cwd string) error {
 		if current, loadErr := loadManifest(primaryRoot); loadErr == nil {
 			manifest = current
 		}
-		if (err == nil || isTrustedAgentAccessUpdateError(err)) && status != RealizationInvalid {
-			reconciledEntry := entry
-			if currentEntry, ok, resolveErr := resolveTrustedManifestEntry(manifest, entry.RepoRef, a.Runner); resolveErr == nil && ok {
-				reconciledEntry = currentEntry
-			}
+		if reconciledEntry, ok := a.trustedEntryForAgentAccessReconcile(manifest, entry, status, err); ok {
 			reconciledTrusted = append(reconciledTrusted, reconciledEntry)
 		}
 	}
@@ -147,6 +143,23 @@ func (a *App) SummonAll(cwd string) error {
 		return err
 	}
 	return nil
+}
+
+func (a *App) trustedEntryForAgentAccessReconcile(manifest Manifest, entry Entry, status RealizationStatus, reconcileErr error) (Entry, bool) {
+	if status == RealizationInvalid {
+		return Entry{}, false
+	}
+	reconciledEntry := entry
+	if currentEntry, ok, resolveErr := resolveTrustedManifestEntry(manifest, entry.RepoRef, a.Runner); resolveErr == nil && ok {
+		reconciledEntry = currentEntry
+	}
+	if reconcileErr == nil || isTrustedAgentAccessUpdateError(reconcileErr) {
+		return reconciledEntry, true
+	}
+	if status == RealizationAttached || InspectAttachmentRealization(reconciledEntry).Status == RealizationAttached {
+		return reconciledEntry, true
+	}
+	return Entry{}, false
 }
 
 func (a *App) SummonUntrusted(cwd string, ref string) error {

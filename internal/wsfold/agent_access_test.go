@@ -204,6 +204,122 @@ func TestAgentAccessCodexProjectConfigCanBeLocalOnlyThroughGlobalExcludes(t *tes
 	}
 }
 
+func TestAgentAccessDoesNotWriteProjectConfigWhenGitignoreUpdateFails(t *testing.T) {
+	h := newAgentAccessHarness(t)
+	service := createTrustedRepo(t, h, "service")
+	gitignorePath := filepath.Join(h.Workspace, ".gitignore")
+	if err := os.Chmod(gitignorePath, 0o400); err != nil {
+		t.Fatalf("make .gitignore read-only: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(gitignorePath, 0o644)
+	})
+
+	app := newAgentAccessApp(h)
+	entry := Entry{
+		RepoRef:      "acme/service",
+		CheckoutPath: service,
+		TrustClass:   TrustClassTrusted,
+	}
+	err := app.ensureTrustedAgentAccess(h.Workspace, entry)
+	if err == nil || !strings.Contains(err.Error(), "write .gitignore") {
+		t.Fatalf("expected .gitignore write failure, got %v", err)
+	}
+
+	root := mustRealPath(t, service)
+	assertCodexRootsNotContain(t, filepath.Join(h.Workspace, ".codex", "config.toml"), root)
+	assertPathMissing(t, filepath.Join(h.Workspace, ".claude", "settings.local.json"))
+	cache, err := loadWorkspaceCache(h.Workspace)
+	if err != nil {
+		t.Fatalf("load cache: %v", err)
+	}
+	if len(cache.AgentAccess) != 0 {
+		t.Fatalf("agent ownership should not be recorded after pre-write failure, got %#v", cache.AgentAccess)
+	}
+}
+
+func TestAgentAccessDoesNotWriteProjectConfigWhenOwnershipSaveFails(t *testing.T) {
+	h := newAgentAccessHarness(t)
+	service := createTrustedRepo(t, h, "service")
+	cacheDir := filepath.Dir(cachePath(h.Workspace))
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("mkdir cache dir: %v", err)
+	}
+	if err := os.Chmod(cacheDir, 0o555); err != nil {
+		t.Fatalf("make cache dir read-only: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(cacheDir, 0o755)
+	})
+
+	app := newAgentAccessApp(h)
+	entry := Entry{
+		RepoRef:      "acme/service",
+		CheckoutPath: service,
+		TrustClass:   TrustClassTrusted,
+	}
+	err := app.ensureTrustedAgentAccess(h.Workspace, entry)
+	if err == nil || !strings.Contains(err.Error(), "write cache") {
+		t.Fatalf("expected cache write failure, got %v", err)
+	}
+
+	root := mustRealPath(t, service)
+	assertCodexRootsNotContain(t, filepath.Join(h.Workspace, ".codex", "config.toml"), root)
+	assertPathMissing(t, filepath.Join(h.Workspace, ".claude", "settings.local.json"))
+}
+
+func TestAgentAccessDoesNotWriteClaudeSettingsWhenGitignoreUpdateFails(t *testing.T) {
+	h := newAgentAccessHarness(t)
+	service := createTrustedRepo(t, h, "service")
+	gitignorePath := filepath.Join(h.Workspace, ".gitignore")
+	if err := os.Chmod(gitignorePath, 0o400); err != nil {
+		t.Fatalf("make .gitignore read-only: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(gitignorePath, 0o644)
+	})
+
+	app := newAgentAccessApp(h)
+	root := mustRealPath(t, service)
+	err := app.ensureClaudeAccess(h.Workspace, "acme/service", root)
+	if err == nil || !strings.Contains(err.Error(), "write .gitignore") {
+		t.Fatalf("expected .gitignore write failure, got %v", err)
+	}
+
+	assertPathMissing(t, filepath.Join(h.Workspace, ".claude", "settings.local.json"))
+	cache, err := loadWorkspaceCache(h.Workspace)
+	if err != nil {
+		t.Fatalf("load cache: %v", err)
+	}
+	if len(cache.AgentAccess) != 0 {
+		t.Fatalf("agent ownership should not be recorded after pre-write failure, got %#v", cache.AgentAccess)
+	}
+}
+
+func TestAgentAccessDoesNotWriteClaudeSettingsWhenOwnershipSaveFails(t *testing.T) {
+	h := newAgentAccessHarness(t)
+	service := createTrustedRepo(t, h, "service")
+	cacheDir := filepath.Dir(cachePath(h.Workspace))
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("mkdir cache dir: %v", err)
+	}
+	if err := os.Chmod(cacheDir, 0o555); err != nil {
+		t.Fatalf("make cache dir read-only: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(cacheDir, 0o755)
+	})
+
+	app := newAgentAccessApp(h)
+	root := mustRealPath(t, service)
+	err := app.ensureClaudeAccess(h.Workspace, "acme/service", root)
+	if err == nil || !strings.Contains(err.Error(), "write cache") {
+		t.Fatalf("expected cache write failure, got %v", err)
+	}
+
+	assertPathMissing(t, filepath.Join(h.Workspace, ".claude", "settings.local.json"))
+}
+
 func TestGitCheckIgnoredReturnsFatalGitErrors(t *testing.T) {
 	dir := t.TempDir()
 	ignored, err := gitCheckIgnored(Runner{}, dir, codexProjectConfigRel)
@@ -245,6 +361,14 @@ func TestCodexWritableRootsFailClosedForExistingInlineOrDottedTable(t *testing.T
 		{
 			name:   "quoted-inline-table",
 			before: "\"sandbox_workspace_write\" = { writable_roots = [\"/user/root\"] }\n",
+		},
+		{
+			name:   "literal-inline-table",
+			before: "'sandbox_workspace_write' = { writable_roots = [\"/user/root\"] }\n",
+		},
+		{
+			name:   "literal-dotted-key",
+			before: "'sandbox_workspace_write'.writable_roots = [\"/user/root\"]\n",
 		},
 		{
 			name:   "quoted-table",
@@ -393,6 +517,143 @@ func TestAgentAccessSummonAllRepairsProjectLocalDrift(t *testing.T) {
 	assertFileContains(t, codexPath, serviceRoot)
 	assertFileContains(t, codexPath, workerRoot)
 	assertClaudeDirectories(t, filepath.Join(h.Workspace, ".claude", "settings.local.json"), serviceRoot, workerRoot)
+}
+
+func TestAgentAccessSummonAllPreservesOwnedRootWhenRepoRefChanges(t *testing.T) {
+	h := newAgentAccessHarness(t)
+	service := createTrustedRepo(t, h, "service")
+
+	app := newAgentAccessApp(h)
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("Summon returned error: %v", err)
+	}
+	root := mustRealPath(t, service)
+	manifest, err := loadManifest(h.Workspace)
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	if len(manifest.Trusted) != 1 {
+		t.Fatalf("expected one trusted entry, got %#v", manifest.Trusted)
+	}
+	manifest.Trusted[0].RepoRef = "acme/service-renamed"
+	if err := saveManifest(h.Workspace, manifest); err != nil {
+		t.Fatalf("save manifest: %v", err)
+	}
+
+	if err := app.SummonAll(h.Workspace); err != nil {
+		t.Fatalf("SummonAll returned error: %v", err)
+	}
+	codexPath := filepath.Join(h.Workspace, ".codex", "config.toml")
+	claudePath := filepath.Join(h.Workspace, ".claude", "settings.local.json")
+	assertCodexRootsContain(t, codexPath, root)
+	assertClaudeDirectories(t, claudePath, root)
+	cache, err := loadWorkspaceCache(h.Workspace)
+	if err != nil {
+		t.Fatalf("load cache: %v", err)
+	}
+	for _, record := range cache.AgentAccess {
+		if normalizeRepoRef(record.RepoRef) != "acme/service-renamed" {
+			t.Fatalf("expected stale repo ref ownership removed, got %#v", cache.AgentAccess)
+		}
+	}
+}
+
+func TestAgentAccessSummonAllRestoresClaudeGitignoreEntryForOwnedSettings(t *testing.T) {
+	h := newAgentAccessHarness(t)
+	service := createTrustedRepo(t, h, "service")
+
+	app := newAgentAccessApp(h)
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("Summon returned error: %v", err)
+	}
+	gitignorePath := filepath.Join(h.Workspace, ".gitignore")
+	if err := os.WriteFile(gitignorePath, []byte(".codex/config.toml\n"), 0o644); err != nil {
+		t.Fatalf("delete Claude ignore entry: %v", err)
+	}
+	assertFileNotContains(t, gitignorePath, ".claude/settings.local.json")
+
+	if err := app.SummonAll(h.Workspace); err != nil {
+		t.Fatalf("SummonAll returned error: %v", err)
+	}
+	assertFileContains(t, gitignorePath, ".claude/settings.local.json")
+	assertClaudeDirectories(t, filepath.Join(h.Workspace, ".claude", "settings.local.json"), mustRealPath(t, service))
+}
+
+func TestAgentAccessRemovalSkipsConfigWriteWhenOwnedRootAbsent(t *testing.T) {
+	h := newAgentAccessHarness(t)
+	createTrustedRepo(t, h, "service")
+
+	app := newAgentAccessApp(h)
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("Summon returned error: %v", err)
+	}
+	codexPath := filepath.Join(h.Workspace, ".codex", "config.toml")
+	claudePath := filepath.Join(h.Workspace, ".claude", "settings.local.json")
+	codexBefore := "model = \"team\"\n"
+	claudeBefore := "{\"theme\":\"dark\"}\n"
+	if err := os.WriteFile(codexPath, []byte(codexBefore), 0o644); err != nil {
+		t.Fatalf("remove Codex root manually: %v", err)
+	}
+	if err := os.WriteFile(claudePath, []byte(claudeBefore), 0o644); err != nil {
+		t.Fatalf("remove Claude root manually: %v", err)
+	}
+
+	if err := app.removeTrustedAgentAccess(h.Workspace, Entry{RepoRef: "acme/service", TrustClass: TrustClassTrusted}); err != nil {
+		t.Fatalf("remove agent access: %v", err)
+	}
+	if got := mustReadString(t, codexPath); got != codexBefore {
+		t.Fatalf("Codex config changed despite absent owned root:\nbefore:\n%s\nafter:\n%s", codexBefore, got)
+	}
+	if got := mustReadString(t, claudePath); got != claudeBefore {
+		t.Fatalf("Claude settings changed despite absent owned root:\nbefore:\n%s\nafter:\n%s", claudeBefore, got)
+	}
+	cache, err := loadWorkspaceCache(h.Workspace)
+	if err != nil {
+		t.Fatalf("load cache: %v", err)
+	}
+	if len(cache.AgentAccess) != 0 {
+		t.Fatalf("expected stale ownership records removed, got %#v", cache.AgentAccess)
+	}
+}
+
+func TestAgentAccessRemovalPreservesRootOwnedByAnotherTrustedEntry(t *testing.T) {
+	h := newAgentAccessHarness(t)
+	service := createTrustedRepo(t, h, "service")
+
+	app := newAgentAccessApp(h)
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("Summon returned error: %v", err)
+	}
+	root := mustRealPath(t, service)
+	aliasRef := "acme/service-alias"
+	codexPath := filepath.Join(h.Workspace, ".codex", "config.toml")
+	claudePath := filepath.Join(h.Workspace, ".claude", "settings.local.json")
+	for _, record := range []AgentAccessEntry{
+		{Agent: agentCodex, Scope: agentAccessScopeProject, ConfigPath: codexPath, RepoRef: aliasRef, CheckoutPath: root},
+		{Agent: agentClaude, Scope: agentAccessScopeProject, ConfigPath: claudePath, RepoRef: aliasRef, CheckoutPath: root},
+	} {
+		if err := upsertAgentAccessRecord(h.Workspace, record); err != nil {
+			t.Fatalf("upsert alias ownership record: %v", err)
+		}
+	}
+
+	if err := app.removeTrustedAgentAccess(h.Workspace, Entry{RepoRef: "acme/service", TrustClass: TrustClassTrusted}); err != nil {
+		t.Fatalf("remove agent access: %v", err)
+	}
+	assertCodexRootsContain(t, codexPath, root)
+	assertClaudeDirectories(t, claudePath, root)
+	cache, err := loadWorkspaceCache(h.Workspace)
+	if err != nil {
+		t.Fatalf("load cache: %v", err)
+	}
+	if len(cache.AgentAccess) != 2 {
+		t.Fatalf("expected only alias ownership records to remain, got %#v", cache.AgentAccess)
+	}
+	for _, record := range cache.AgentAccess {
+		if normalizeRepoRef(record.RepoRef) != normalizeRepoRef(aliasRef) {
+			t.Fatalf("expected dismissed ref ownership removed, got %#v", cache.AgentAccess)
+		}
+	}
 }
 
 func TestAgentAccessSummonAllRemovesStaleRootsWhenCheckoutPathChanges(t *testing.T) {
@@ -614,6 +875,38 @@ func TestAgentAccessSummonAllKeepsDeclaredEntryWhenAgentUpdateFails(t *testing.T
 	}
 }
 
+func TestAgentAccessSummonAllKeepsAttachedEntryWhenManagedIgnoreUpdateFails(t *testing.T) {
+	h := newAgentAccessHarness(t)
+	service := createTrustedRepo(t, h, "service")
+
+	app := newAgentAccessApp(h)
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("Summon returned error: %v", err)
+	}
+	root := mustRealPath(t, service)
+	gitignorePath := filepath.Join(h.Workspace, ".gitignore")
+	if err := os.Chmod(gitignorePath, 0o400); err != nil {
+		t.Fatalf("make .gitignore read-only: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(gitignorePath, 0o644)
+	})
+
+	err := app.SummonAll(h.Workspace)
+	if err == nil || !strings.Contains(err.Error(), "workspace reconciliation completed with 0 invalid and 1 failed") {
+		t.Fatalf("expected summon-all managed ignore failure, got %v", err)
+	}
+	assertCodexRootsContain(t, filepath.Join(h.Workspace, ".codex", "config.toml"), root)
+	assertClaudeDirectories(t, filepath.Join(h.Workspace, ".claude", "settings.local.json"), root)
+	cache, err := loadWorkspaceCache(h.Workspace)
+	if err != nil {
+		t.Fatalf("load cache: %v", err)
+	}
+	if len(cache.AgentAccess) != 2 {
+		t.Fatalf("expected attached trusted entry ownership to remain, got %#v", cache.AgentAccess)
+	}
+}
+
 func TestDismissKeepsTrustedManifestEntryWhenAgentAccessRemovalFails(t *testing.T) {
 	h := newAgentAccessHarness(t)
 	createTrustedRepo(t, h, "service")
@@ -739,6 +1032,13 @@ func assertFileNotContains(t *testing.T, path string, snippet string) {
 	t.Helper()
 	if strings.Contains(mustReadString(t, path), snippet) {
 		t.Fatalf("%s contains %q:\n%s", path, snippet, mustReadString(t, path))
+	}
+}
+
+func assertPathMissing(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("expected %s to be absent, got err=%v", path, err)
 	}
 }
 

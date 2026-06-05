@@ -97,6 +97,12 @@ func (a *App) reconcileTrustedAgentAccess(primaryRoot string, entries []Entry) e
 		if agentAccessRecordInSet(record, desired) {
 			continue
 		}
+		if agentAccessConfigRootInSet(record, desired) {
+			if err := removeAgentAccessCacheRecord(primaryRoot, record); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := a.removeAgentAccessRecord(primaryRoot, record, true); err != nil {
 			return err
 		}
@@ -143,6 +149,12 @@ func (a *App) removeTrustedAgentAccess(primaryRoot string, entry Entry) error {
 		if normalizeRepoRef(record.RepoRef) != normalizeRepoRef(entry.RepoRef) {
 			continue
 		}
+		if agentAccessConfigRootOwnedByOtherRecord(cache, record) {
+			if err := removeAgentAccessCacheRecord(primaryRoot, record); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := a.removeAgentAccessRecord(primaryRoot, record, true); err != nil {
 			return err
 		}
@@ -156,11 +168,16 @@ func (a *App) ensureCodexAccess(primaryRoot string, repoRef string, root string)
 		return err
 	}
 	existedBefore := fileExists(configPath)
-	changed, alreadyPresent, err := addCodexWritableRoot(configPath, root)
+	cfg, changed, alreadyPresent, err := codexWritableRootUpdate(configPath, root)
 	if err != nil {
 		return err
 	}
-	if changed && scope == agentAccessScopeProject {
+	hasRecord := hasAgentAccessRecord(primaryRoot, agentCodex, scope, configPath, repoRef, root)
+	hasRootRecord := hasAgentAccessConfigRootRecord(primaryRoot, agentCodex, scope, configPath, root)
+	if alreadyPresent && scope != agentAccessScopeHome && !hasRecord && !hasRootRecord {
+		return nil
+	}
+	if scope == agentAccessScopeProject && (changed || alreadyPresent && (hasRecord || hasRootRecord)) {
 		if err := ensureGitignoreEntry(primaryRoot, codexProjectConfigRel); err != nil {
 			return err
 		}
@@ -169,19 +186,29 @@ func (a *App) ensureCodexAccess(primaryRoot string, repoRef string, root string)
 		createdFile = createdFile || !existedBefore
 	}
 	if scope == agentAccessScopeHome && changed {
-		_, _ = fmt.Fprintf(a.Stderr, "Warning: WSFold added Codex writable root %s to %s. WSFold will not remove global Codex roots automatically on dismiss; remove the root manually if it should stop being trusted.\n", root, configPath)
+		createdFile = createdFile || !existedBefore
 	}
-	if alreadyPresent && scope != agentAccessScopeHome && !hasAgentAccessRecord(primaryRoot, agentCodex, scope, configPath, repoRef, root) {
-		return nil
-	}
-	return upsertAgentAccessRecord(primaryRoot, AgentAccessEntry{
+	record := AgentAccessEntry{
 		Agent:        agentCodex,
 		Scope:        scope,
 		ConfigPath:   configPath,
 		RepoRef:      repoRef,
 		CheckoutPath: root,
 		CreatedFile:  createdFile,
-	})
+	}
+	if err := upsertAgentAccessRecord(primaryRoot, record); err != nil {
+		return err
+	}
+	if changed {
+		if err := writeCodexConfig(configPath, cfg); err != nil {
+			_ = removeAgentAccessCacheRecord(primaryRoot, record)
+			return err
+		}
+		if scope == agentAccessScopeHome {
+			_, _ = fmt.Fprintf(a.Stderr, "Warning: WSFold added Codex writable root %s to %s. WSFold will not remove global Codex roots automatically on dismiss; remove the root manually if it should stop being trusted.\n", root, configPath)
+		}
+	}
+	return nil
 }
 
 func (a *App) selectCodexConfig(primaryRoot string) (string, string, bool, error) {
@@ -213,26 +240,38 @@ func (a *App) selectCodexConfig(primaryRoot string) (string, string, bool, error
 func (a *App) ensureClaudeAccess(primaryRoot string, repoRef string, root string) error {
 	configPath := filepath.Join(primaryRoot, filepath.FromSlash(claudeLocalConfigRel))
 	existedBefore := fileExists(configPath)
-	changed, alreadyPresent, err := addClaudeAdditionalDirectory(configPath, root)
+	settings, changed, alreadyPresent, err := claudeAdditionalDirectoryUpdate(configPath, root)
 	if err != nil {
 		return err
 	}
-	if changed {
+	hasRecord := hasAgentAccessRecord(primaryRoot, agentClaude, agentAccessScopeProject, configPath, repoRef, root)
+	hasRootRecord := hasAgentAccessConfigRootRecord(primaryRoot, agentClaude, agentAccessScopeProject, configPath, root)
+	if alreadyPresent && !hasRecord && !hasRootRecord {
+		return nil
+	}
+	if changed || alreadyPresent && (hasRecord || hasRootRecord) {
 		if err := ensureGitignoreEntry(primaryRoot, claudeLocalConfigRel); err != nil {
 			return err
 		}
 	}
-	if alreadyPresent && !hasAgentAccessRecord(primaryRoot, agentClaude, agentAccessScopeProject, configPath, repoRef, root) {
-		return nil
-	}
-	return upsertAgentAccessRecord(primaryRoot, AgentAccessEntry{
+	record := AgentAccessEntry{
 		Agent:        agentClaude,
 		Scope:        agentAccessScopeProject,
 		ConfigPath:   configPath,
 		RepoRef:      repoRef,
 		CheckoutPath: root,
 		CreatedFile:  !existedBefore,
-	})
+	}
+	if err := upsertAgentAccessRecord(primaryRoot, record); err != nil {
+		return err
+	}
+	if changed {
+		if err := writeClaudeSettings(configPath, settings); err != nil {
+			_ = removeAgentAccessCacheRecord(primaryRoot, record)
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *App) removeAgentAccessRecord(primaryRoot string, record AgentAccessEntry, removeRecord bool) error {
@@ -342,6 +381,33 @@ func hasAgentAccessRecord(primaryRoot string, agent string, scope string, config
 	return false
 }
 
+func hasAgentAccessConfigRootRecord(primaryRoot string, agent string, scope string, configPath string, root string) bool {
+	cache, err := loadWorkspaceCache(primaryRoot)
+	if err != nil {
+		return false
+	}
+	target := normalizeAgentAccessRecord(AgentAccessEntry{Agent: agent, Scope: scope, ConfigPath: configPath, CheckoutPath: root})
+	for _, record := range cache.AgentAccess {
+		if sameAgentAccessConfigRoot(record, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentAccessConfigRootOwnedByOtherRecord(cache WorkspaceCache, record AgentAccessEntry) bool {
+	record = normalizeAgentAccessRecord(record)
+	for _, existing := range cache.AgentAccess {
+		if sameAgentAccessRecord(existing, record) {
+			continue
+		}
+		if sameAgentAccessConfigRoot(existing, record) {
+			return true
+		}
+	}
+	return false
+}
+
 func upsertAgentAccessRecord(primaryRoot string, record AgentAccessEntry) error {
 	cache, err := loadWorkspaceCache(primaryRoot)
 	if err != nil {
@@ -394,23 +460,25 @@ func sameAgentAccessRecord(left AgentAccessEntry, right AgentAccessEntry) bool {
 		samePhysicalPath(left.CheckoutPath, right.CheckoutPath)
 }
 
+func sameAgentAccessConfigRoot(left AgentAccessEntry, right AgentAccessEntry) bool {
+	left = normalizeAgentAccessRecord(left)
+	right = normalizeAgentAccessRecord(right)
+	return left.Agent == right.Agent &&
+		left.Scope == right.Scope &&
+		samePhysicalPath(left.ConfigPath, right.ConfigPath) &&
+		samePhysicalPath(left.CheckoutPath, right.CheckoutPath)
+}
+
 func samePhysicalPath(left string, right string) bool {
 	return canonicalComparePath(left) == canonicalComparePath(right)
 }
 
 func canonicalComparePath(path string) string {
-	path = filepath.Clean(strings.TrimSpace(path))
+	path = strings.TrimSpace(path)
 	if path == "" {
 		return ""
 	}
-	abs, err := filepath.Abs(path)
-	if err == nil {
-		path = abs
-	}
-	if real, err := filepath.EvalSymlinks(path); err == nil {
-		path = real
-	}
-	return filepath.Clean(path)
+	return cleanAbsPath(path)
 }
 
 func agentAccessRecordInSet(record AgentAccessEntry, desired []AgentAccessEntry) bool {
@@ -422,20 +490,40 @@ func agentAccessRecordInSet(record AgentAccessEntry, desired []AgentAccessEntry)
 	return false
 }
 
+func agentAccessConfigRootInSet(record AgentAccessEntry, desired []AgentAccessEntry) bool {
+	for _, candidate := range desired {
+		if sameAgentAccessConfigRoot(record, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
 func addCodexWritableRoot(path string, root string) (bool, bool, error) {
-	cfg, err := readCodexConfig(path)
+	cfg, changed, alreadyPresent, err := codexWritableRootUpdate(path, root)
 	if err != nil {
 		return false, false, err
 	}
-	if containsExactString(cfg.roots, root) {
-		return false, true, nil
+	if !changed {
+		return false, alreadyPresent, nil
 	}
-	cfg.roots = append(cfg.roots, root)
-	sort.Strings(cfg.roots)
 	if err := writeCodexConfig(path, cfg); err != nil {
 		return false, false, err
 	}
 	return true, false, nil
+}
+
+func codexWritableRootUpdate(path string, root string) (codexConfigFile, bool, bool, error) {
+	cfg, err := readCodexConfig(path)
+	if err != nil {
+		return codexConfigFile{}, false, false, err
+	}
+	if containsExactString(cfg.roots, root) {
+		return cfg, false, true, nil
+	}
+	cfg.roots = append(cfg.roots, root)
+	sort.Strings(cfg.roots)
+	return cfg, true, false, nil
 }
 
 func removeCodexWritableRoot(path string, root string) error {
@@ -445,6 +533,9 @@ func removeCodexWritableRoot(path string, root string) error {
 	cfg, err := readCodexConfig(path)
 	if err != nil {
 		return err
+	}
+	if !containsExactString(cfg.roots, root) {
+		return nil
 	}
 	next := cfg.roots[:0]
 	for _, existing := range cfg.roots {
@@ -643,7 +734,9 @@ func isCodexSandboxWorkspaceAssignmentKey(key string) bool {
 	return key == "sandbox_workspace_write" ||
 		strings.HasPrefix(key, "sandbox_workspace_write.") ||
 		key == `"sandbox_workspace_write"` ||
-		strings.HasPrefix(key, `"sandbox_workspace_write".`)
+		strings.HasPrefix(key, `"sandbox_workspace_write".`) ||
+		key == `'sandbox_workspace_write'` ||
+		strings.HasPrefix(key, `'sandbox_workspace_write'.`)
 }
 
 func isQuotedCodexSandboxWorkspaceTableName(name string) bool {
@@ -764,20 +857,31 @@ func renderCodexWritableRoots(roots []string) []string {
 }
 
 func addClaudeAdditionalDirectory(path string, root string) (bool, bool, error) {
-	settings, err := readClaudeSettings(path)
+	settings, changed, alreadyPresent, err := claudeAdditionalDirectoryUpdate(path, root)
 	if err != nil {
 		return false, false, err
+	}
+	if !changed {
+		return false, alreadyPresent, nil
+	}
+	return true, false, writeClaudeSettings(path, settings)
+}
+
+func claudeAdditionalDirectoryUpdate(path string, root string) (map[string]any, bool, bool, error) {
+	settings, err := readClaudeSettings(path)
+	if err != nil {
+		return nil, false, false, err
 	}
 	permissions := objectMap(settings["permissions"])
 	dirs := stringSlice(permissions["additionalDirectories"])
 	if containsExactString(dirs, root) {
-		return false, true, nil
+		return settings, false, true, nil
 	}
 	dirs = append(dirs, root)
 	sort.Strings(dirs)
 	permissions["additionalDirectories"] = dirs
 	settings["permissions"] = permissions
-	return true, false, writeClaudeSettings(path, settings)
+	return settings, true, false, nil
 }
 
 func removeClaudeAdditionalDirectory(path string, root string) error {
@@ -790,6 +894,9 @@ func removeClaudeAdditionalDirectory(path string, root string) error {
 	}
 	permissions := objectMap(settings["permissions"])
 	dirs := stringSlice(permissions["additionalDirectories"])
+	if !containsExactString(dirs, root) {
+		return nil
+	}
 	next := dirs[:0]
 	for _, dir := range dirs {
 		if dir != root {
