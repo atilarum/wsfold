@@ -1,6 +1,7 @@
 package reconciliation_test
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,6 +113,40 @@ func TestReconciliationContractSummonAllPartialInvalid(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(workerLink, "user.txt")); err != nil {
 		t.Fatalf("invalid worker content should be preserved: %v", err)
+	}
+}
+
+func TestReconciliationContractSummonAllKeepsDirtyManagedWorktreeAttached(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	primaryCheckout := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(primaryCheckout)
+	h.RunGit(primaryCheckout, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.RunGit(primaryCheckout, "branch", "feature/dirty")
+
+	app := wsfold.NewApp()
+	app.Runner = wsfold.Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Worktree(h.Workspace, "service", "feature/dirty", wsfold.WorktreeOptions{}); err != nil {
+		t.Fatalf("setup worktree failed: %v", err)
+	}
+
+	worktreePath := filepath.Join(h.Workspace, "service-feature-dirty")
+	if err := os.WriteFile(filepath.Join(worktreePath, "dirty.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatalf("write dirty worktree file: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	app.Stdout = &stdout
+	if err := app.SummonAll(h.Workspace); err != nil {
+		t.Fatalf("summon-all should keep dirty attached managed worktree valid: %v", err)
+	}
+	if strings.Contains(stdout.String(), "Managed worktree invalid:") {
+		t.Fatalf("dirty attached managed worktree should not be reported invalid:\n%s", stdout.String())
+	}
+	if status := h.RunGit(worktreePath, "status", "--short"); !strings.Contains(status, "dirty.txt") {
+		t.Fatalf("dirty worktree change should be preserved, got status:\n%s", status)
 	}
 }
 

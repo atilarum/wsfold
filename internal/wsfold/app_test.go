@@ -178,6 +178,50 @@ func TestManagedWorkspaceGitignoreLifecycleContract(t *testing.T) {
 	assertGitInfoExcludeUnchanged(t, excludePath, excludeBefore)
 }
 
+func TestSummonAllTreatsDirtyManagedWorktreeAsAttached(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	primaryCheckout := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(primaryCheckout)
+	h.RunGit(primaryCheckout, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.RunGit(primaryCheckout, "branch", "feature/dirty")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Worktree(h.Workspace, "service", "feature/dirty", WorktreeOptions{}); err != nil {
+		t.Fatalf("Worktree returned error: %v", err)
+	}
+
+	worktreePath := filepath.Join(h.Workspace, "service-feature-dirty")
+	if err := os.WriteFile(filepath.Join(worktreePath, "dirty.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatalf("write dirty file: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	app.Stdout = &stdout
+	if err := app.SummonAll(h.Workspace); err != nil {
+		t.Fatalf("SummonAll returned error for dirty attached worktree: %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "Managed worktree already attached:") {
+		t.Fatalf("expected dirty managed worktree to be reported as already attached, got:\n%s", output)
+	}
+	if strings.Contains(output, "Managed worktree invalid:") ||
+		strings.Contains(output, "has staged, unstaged, or untracked changes") ||
+		strings.Contains(output, "has local changes") {
+		t.Fatalf("summon-all should not warn about dirty attached managed worktrees, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Reconciliation complete: 2 attached, 0 recovered, 0 invalid, 0 failed") {
+		t.Fatalf("expected dirty managed worktree to count as attached, got:\n%s", output)
+	}
+	if status := h.RunGit(worktreePath, "status", "--short"); !strings.Contains(status, "dirty.txt") {
+		t.Fatalf("dirty worktree change should be preserved, got status:\n%s", status)
+	}
+}
+
 func TestSummonRecoversDeclaredSymlinkAttachment(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnv(t, h)

@@ -718,6 +718,13 @@ func prepareMountResidueForRecovery(path string) error {
 
 func (a *App) reconcileManagedWorktree(primaryRoot string, cfg Config, manifest Manifest, entry ManagedWorktreeEntry) (RealizationStatus, error) {
 	realization := InspectManagedWorktreeRealization(manifest, entry, a.Runner)
+	if isAttachedDirtyManagedWorktree(realization) {
+		if err := addManagedWorkspaceIgnorePath(primaryRoot, entry.WorkspacePath); err != nil {
+			return RealizationAttached, err
+		}
+		_, _ = fmt.Fprintf(a.Stdout, "%s Managed worktree already attached: %s\n", ansiGreenBold+"✓"+ansiReset, ansiCyanBold+entry.RepoRef+ansiReset)
+		return RealizationAttached, nil
+	}
 	switch realization.Status {
 	case RealizationAttached:
 		if err := addManagedWorkspaceIgnorePath(primaryRoot, entry.WorkspacePath); err != nil {
