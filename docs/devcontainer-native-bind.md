@@ -52,6 +52,8 @@ sudo mount --bind <source-checkout> <workspace-path>
 
 `wsfold.yaml` records the workspace path, `.wsfold/cache.yaml` records `backend: linux-native-bind` and the source checkout location, and the generated `.code-workspace` points at the managed workspace path. The cache stores only the concrete backend actually used; it does not store `auto` or global capability state.
 
+WSFold adds the managed workspace path to the primary repository `.gitignore` in a visible WSFold-owned block. It does not write `.git/info/exclude` or generated Visual Studio Code exclude settings for this behavior. The ignored mountpoint keeps the primary repository status clean, but the mounted repository still uses its own Git metadata. An empty native bind mountpoint directory is not tracked by Git unless you add your own placeholder file.
+
 `wsfold dismiss` runs:
 
 ```bash

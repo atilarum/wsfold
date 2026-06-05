@@ -201,12 +201,13 @@ func saveTrustedOrgCache(cache trustedOrgCache) error {
 }
 
 func trustedRemoteCachePath(org string) (string, error) {
-	if root := strings.TrimSpace(os.Getenv("XDG_CACHE_HOME")); root != "" {
-		return filepath.Join(root, "wsfold", "trusted-github", strings.ToLower(org)+".json"), nil
-	}
-	root, err := os.UserCacheDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve user cache dir: %w", err)
+	root := strings.TrimSpace(os.Getenv("XDG_CACHE_HOME"))
+	if root == "" {
+		var err error
+		root, err = os.UserCacheDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve user cache dir: %w", err)
+		}
 	}
 	return filepath.Join(root, "wsfold", "trusted-github", strings.ToLower(org)+".json"), nil
 }

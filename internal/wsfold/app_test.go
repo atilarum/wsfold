@@ -1467,7 +1467,7 @@ func TestDismissManagedWorktreeRefusesStaleManifestPathWhenBranchStillCheckedOut
 	if err == nil ||
 		!strings.Contains(err.Error(), "branch feature/worktree for acme/service is already registered at ") ||
 		!strings.Contains(err.Error(), filepath.Base(worktreePath)) ||
-		!strings.Contains(err.Error(), "but this workspace expects "+manifest.ManagedWorktrees[0].WorkspacePath) ||
+		!strings.Contains(err.Error(), "but this workspace expects "+cleanAbsPath(manifest.ManagedWorktrees[0].WorkspacePath)) ||
 		!strings.Contains(err.Error(), "changes") {
 		t.Fatalf("expected stale path dirty worktree refusal, got %v", err)
 	}

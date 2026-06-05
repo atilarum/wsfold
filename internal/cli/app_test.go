@@ -733,12 +733,13 @@ func loadTrustedCacheForTest(org string) (trustedCacheForTest, bool, error) {
 }
 
 func trustedRemoteCachePathForTest(org string) (string, error) {
-	if root := strings.TrimSpace(os.Getenv("XDG_CACHE_HOME")); root != "" {
-		return filepath.Join(root, "wsfold", "trusted-github", org+".json"), nil
-	}
-	root, err := os.UserCacheDir()
-	if err != nil {
-		return "", err
+	root := strings.TrimSpace(os.Getenv("XDG_CACHE_HOME"))
+	if root == "" {
+		var err error
+		root, err = os.UserCacheDir()
+		if err != nil {
+			return "", err
+		}
 	}
 	return filepath.Join(root, "wsfold", "trusted-github", org+".json"), nil
 }

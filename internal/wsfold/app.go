@@ -401,7 +401,7 @@ func (a *App) Worktree(cwd string, ref string, branch string, opts WorktreeOptio
 	}
 	previous := cloneManifest(manifest)
 
-	if worktreeBranches, err := listWorktreeBranchPaths(a.Runner, primaryEntry.MountPath); err != nil {
+	if worktreeBranches, err := listWorktreeBranchPathsWithReference(a.Runner, primaryEntry.MountPath, primaryEntry.CheckoutPath); err != nil {
 		return err
 	} else if worktreePath := strings.TrimSpace(worktreeBranches[branch]); worktreePath != "" {
 		return fmt.Errorf("branch %q is already checked out by worktree at %s", branch, worktreePath)
@@ -791,6 +791,9 @@ func (a *App) recoverManagedWorktree(primaryRoot string, cfg Config, manifest Ma
 		return fmt.Errorf("recovered worktree did not satisfy workspace-local control path contract: %w", err)
 	}
 	if err := writeWorkspace(primaryRoot, previous, manifest, cfg.ProjectsDirName); err != nil {
+		return err
+	}
+	if err := addManagedWorkspaceIgnorePath(primaryRoot, entry.WorkspacePath); err != nil {
 		return err
 	}
 	return nil

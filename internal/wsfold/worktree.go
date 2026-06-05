@@ -162,6 +162,10 @@ func worktreeBranchPathsForSource(source WorktreeSource, runner Runner) (map[str
 }
 
 func listWorktreeBranchPaths(runner Runner, repoPath string) (map[string]string, error) {
+	return listWorktreeBranchPathsWithReference(runner, repoPath, repoPath)
+}
+
+func listWorktreeBranchPathsWithReference(runner Runner, repoPath string, displayReference string) (map[string]string, error) {
 	output, err := runner.Git(repoPath, "worktree", "list", "--porcelain")
 	if err != nil {
 		return nil, fmt.Errorf("list worktrees for %s: %w", repoPath, err)
@@ -176,7 +180,7 @@ func listWorktreeBranchPaths(runner Runner, repoPath string) (map[string]string,
 			continue
 		}
 		if path, ok := strings.CutPrefix(line, "worktree "); ok {
-			currentPath = strings.TrimSpace(path)
+			currentPath = displayPathLikeReference(strings.TrimSpace(path), displayReference)
 			continue
 		}
 		branch, ok := strings.CutPrefix(line, "branch refs/heads/")

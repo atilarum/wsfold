@@ -141,7 +141,7 @@ func inspectMissingManagedWorktree(result ManagedWorktreeInspection, entry Manag
 }
 
 func registeredAtDifferentPathReason(entry ManagedWorktreeEntry, actualPath string, detail string) string {
-	base := fmt.Sprintf("branch %s for %s is already registered at %s, but this workspace expects %s.", entry.Branch, entry.PrimaryRepoRef, actualPath, entry.WorkspacePath)
+	base := fmt.Sprintf("branch %s for %s is already registered at %s, but this workspace expects %s.", entry.Branch, entry.PrimaryRepoRef, displayPathLikeReference(actualPath, entry.WorkspacePath), displayAbsPath(entry.WorkspacePath))
 	if strings.TrimSpace(detail) == "" {
 		return base
 	}
@@ -219,6 +219,29 @@ func readWorktreeGitDir(worktreePath string) (string, error) {
 		gitDir = filepath.Join(worktreePath, gitDir)
 	}
 	return filepath.Clean(gitDir), nil
+}
+
+func canonicalPathWithExistingParent(path string) (string, error) {
+	path = filepath.Clean(path)
+	rest := []string{}
+	for {
+		if _, err := os.Stat(path); err == nil {
+			resolved, resolveErr := filepath.EvalSymlinks(path)
+			if resolveErr != nil {
+				return "", resolveErr
+			}
+			parts := append([]string{resolved}, rest...)
+			return filepath.Clean(filepath.Join(parts...)), nil
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return "", os.ErrNotExist
+		}
+		rest = append([]string{filepath.Base(path)}, rest...)
+		path = parent
+	}
 }
 
 func pathHasAnyPrefix(path string, roots []string) bool {
