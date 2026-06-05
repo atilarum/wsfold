@@ -333,8 +333,8 @@ func classifyExternalWorktreeRow(runner Runner, primaryRoot string, manifest Man
 	row := ExternalWorktreeRow{
 		ID:                  externalWorktreeRowID(repo.CheckoutPath, normalizedPath),
 		Repository:          repo.DisplayRef(),
-		PrimaryCheckoutPath: displayAbsPath(repo.CheckoutPath),
-		WorktreePath:        displayPath,
+		PrimaryCheckoutPath: cleanDisplayAbsPath(repo.CheckoutPath),
+		WorktreePath:        record.Path,
 		NormalizedPath:      normalizedPath,
 		RealPath:            bestEffortRealPath(record.Path),
 		Branch:              strings.TrimSpace(record.Branch),
@@ -520,6 +520,44 @@ func cleanAbsPath(path string) string {
 	if err != nil {
 		return filepath.Clean(path)
 	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return filepath.Clean(resolved)
+	}
+	if resolved, ok := evalSymlinksThroughExistingParent(abs); ok {
+		return filepath.Clean(resolved)
+	}
+	if currentGOOS == "darwin" && strings.HasPrefix(abs, "/var/") {
+		return filepath.Clean("/private" + abs)
+	}
+	return filepath.Clean(abs)
+}
+
+func evalSymlinksThroughExistingParent(path string) (string, bool) {
+	path = filepath.Clean(path)
+	missing := []string{}
+	for {
+		parent := filepath.Dir(path)
+		if parent == path {
+			return "", false
+		}
+		missing = append([]string{filepath.Base(path)}, missing...)
+		resolved, err := filepath.EvalSymlinks(parent)
+		if err == nil {
+			parts := append([]string{resolved}, missing...)
+			return filepath.Join(parts...), true
+		}
+		path = parent
+	}
+}
+
+func cleanDisplayAbsPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
 	return filepath.Clean(abs)
 }
 
@@ -603,9 +641,5 @@ func externalWorktreeComparisonPath(row ExternalWorktreeRow) string {
 }
 
 func canonicalAbsPath(path string) string {
-	clean := cleanAbsPath(path)
-	if canonical, err := canonicalPathWithExistingParent(clean); err == nil {
-		return canonical
-	}
-	return clean
+	return cleanAbsPath(path)
 }

@@ -155,18 +155,24 @@ func TestExternalWorktreeRemovalCandidatesHidePrimaryRowsAndUseReadableStatuses(
 		t.Fatalf("expected only linked worktree candidates, got %#v", candidates)
 	}
 
-	statusByPath := map[string]string{}
+	cleanStatus := ""
+	staleStatus := ""
 	for _, candidate := range candidates {
-		if sameFilesystemPath(candidate.Description, primary) {
+		if samePath(candidate.Description, primary) {
 			t.Fatalf("primary checkout should not be shown as a picker candidate: %#v", candidate)
 		}
-		statusByPath[cleanAbsPath(candidate.Description)] = string(candidate.Source)
+		if samePath(candidate.Description, clean) {
+			cleanStatus = string(candidate.Source)
+		}
+		if samePath(candidate.Description, stale) {
+			staleStatus = string(candidate.Source)
+		}
 	}
-	if statusByPath[cleanAbsPath(clean)] != "clean" {
-		t.Fatalf("clean worktree status = %q", statusByPath[cleanAbsPath(clean)])
+	if cleanStatus != "clean" {
+		t.Fatalf("clean worktree status = %q", cleanStatus)
 	}
-	if statusByPath[cleanAbsPath(stale)] != "missing" {
-		t.Fatalf("missing worktree status = %q", statusByPath[cleanAbsPath(stale)])
+	if staleStatus != "missing" {
+		t.Fatalf("missing worktree status = %q", staleStatus)
 	}
 }
 
@@ -198,6 +204,30 @@ func TestExternalWorktreeAmbiguousRowsAreBlocked(t *testing.T) {
 		if !strings.Contains(row.Reason, "ambiguous") {
 			t.Fatalf("ambiguous row reason was not set: %#v", row)
 		}
+	}
+}
+
+func TestCleanAbsPathCanonicalizesMissingLeafThroughExistingSymlinkParent(t *testing.T) {
+	root := t.TempDir()
+	realParent := filepath.Join(root, "real-parent")
+	if err := os.MkdirAll(realParent, 0o755); err != nil {
+		t.Fatalf("mkdir real parent: %v", err)
+	}
+	aliasParent := filepath.Join(root, "alias-parent")
+	if err := os.Symlink(realParent, aliasParent); err != nil {
+		t.Fatalf("create symlink parent: %v", err)
+	}
+
+	aliasMissing := filepath.Join(aliasParent, "missing-worktree")
+	realMissing := filepath.Join(realParent, "missing-worktree")
+	if cleanAbsPath(aliasMissing) != cleanAbsPath(realMissing) {
+		t.Fatalf("missing path under symlink parent did not canonicalize: alias=%q real=%q", cleanAbsPath(aliasMissing), cleanAbsPath(realMissing))
+	}
+	if !samePath(aliasMissing, realMissing) {
+		t.Fatalf("samePath should match missing leaf paths through existing symlink parent")
+	}
+	if !pathInside(aliasParent, realMissing) {
+		t.Fatalf("pathInside should match real child through symlink root")
 	}
 }
 

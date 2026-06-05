@@ -76,6 +76,9 @@ func (a *App) SummonAll(cwd string) error {
 		return err
 	}
 	if len(manifest.Trusted) == 0 && len(manifest.ManagedWorktrees) == 0 {
+		if err := a.reconcileTrustedAgentAccess(primaryRoot, nil); err != nil {
+			return err
+		}
 		if err := reconcileManagedWorkspaceIgnorePaths(primaryRoot, nil); err != nil {
 			return err
 		}
@@ -84,6 +87,7 @@ func (a *App) SummonAll(cwd string) error {
 	}
 
 	var attached, recovered, invalid, failed int
+	reconciledTrusted := []Entry{}
 	for _, entry := range manifest.Trusted {
 		status, err := a.reconcileTrustedEntry(primaryRoot, cfg, manifest, entry)
 		switch {
@@ -100,6 +104,13 @@ func (a *App) SummonAll(cwd string) error {
 		if current, loadErr := loadManifest(primaryRoot); loadErr == nil {
 			manifest = current
 		}
+		if reconciledEntry, ok := a.trustedEntryForAgentAccessReconcile(manifest, entry, status, err); ok {
+			reconciledTrusted = append(reconciledTrusted, reconciledEntry)
+		}
+	}
+	if err := a.reconcileTrustedAgentAccess(primaryRoot, reconciledTrusted); err != nil {
+		failed++
+		_, _ = fmt.Fprintf(a.Stdout, "%s failed: agent access: %v\n", ansiRedBold+"✗"+ansiReset, err)
 	}
 	for _, entry := range manifest.ManagedWorktrees {
 		status, err := a.reconcileManagedWorktree(primaryRoot, cfg, manifest, entry)
@@ -132,6 +143,23 @@ func (a *App) SummonAll(cwd string) error {
 		return err
 	}
 	return nil
+}
+
+func (a *App) trustedEntryForAgentAccessReconcile(manifest Manifest, entry Entry, status RealizationStatus, reconcileErr error) (Entry, bool) {
+	if status == RealizationInvalid {
+		return Entry{}, false
+	}
+	reconciledEntry := entry
+	if currentEntry, ok, resolveErr := resolveTrustedManifestEntry(manifest, entry.RepoRef, a.Runner); resolveErr == nil && ok {
+		reconciledEntry = currentEntry
+	}
+	if reconcileErr == nil || isTrustedAgentAccessUpdateError(reconcileErr) {
+		return reconciledEntry, true
+	}
+	if status == RealizationAttached || InspectAttachmentRealization(reconciledEntry).Status == RealizationAttached {
+		return reconciledEntry, true
+	}
+	return Entry{}, false
 }
 
 func (a *App) SummonUntrusted(cwd string, ref string) error {
@@ -538,6 +566,9 @@ func (a *App) attachRepo(primaryRoot string, cfg Config, repo Repo, requested Tr
 		if err := addManagedWorkspaceIgnorePath(primaryRoot, entry.MountPath); err != nil {
 			return err
 		}
+		if err := a.ensureTrustedAgentAccess(primaryRoot, entry); err != nil {
+			return err
+		}
 	}
 
 	_, _ = fmt.Fprintln(a.Stdout, formatSummonSuccess(requested, repo, entry, primaryRoot))
@@ -556,6 +587,9 @@ func (a *App) reconcileTrustedEntry(primaryRoot string, cfg Config, manifest Man
 		if err := addManagedWorkspaceIgnorePath(primaryRoot, entry.MountPath); err != nil {
 			return RealizationAttached, err
 		}
+		if err := a.ensureTrustedAgentAccess(primaryRoot, entry); err != nil {
+			return RealizationAttached, markTrustedAgentAccessUpdateError(err)
+		}
 		_, _ = fmt.Fprintf(a.Stdout, "%s Trusted repository already attached: %s\n", ansiGreenBold+"✓"+ansiReset, ansiCyanBold+entry.RepoRef+ansiReset)
 		return RealizationAttached, nil
 	case RealizationInvalid:
@@ -564,6 +598,14 @@ func (a *App) reconcileTrustedEntry(primaryRoot string, cfg Config, manifest Man
 	case RealizationUnmounted:
 		if err := a.recoverTrustedEntry(primaryRoot, cfg, manifest, entry); err != nil {
 			return RealizationUnmounted, err
+		}
+		if current, err := loadManifest(primaryRoot); err == nil {
+			if recovered, ok, _ := resolveTrustedManifestEntry(current, entry.RepoRef, a.Runner); ok {
+				entry = recovered
+			}
+		}
+		if err := a.ensureTrustedAgentAccess(primaryRoot, entry); err != nil {
+			return RealizationUnmounted, markTrustedAgentAccessUpdateError(err)
 		}
 		_, _ = fmt.Fprintf(a.Stdout, "%s Trusted repository recovered: %s\n", ansiGreenBold+"✓"+ansiReset, ansiCyanBold+entry.RepoRef+ansiReset)
 		return RealizationUnmounted, nil
@@ -614,7 +656,6 @@ func (a *App) realizeTrustedAttachment(manifest Manifest, entry Entry, selection
 		if err := ensureTrustedSymlink(entry.MountPath, entry.CheckoutPath); err != nil {
 			return formatTrustedBackendFailure("create symlink attachment", selection, err)
 		}
-		a.warnSymlinkAttachment()
 	case AttachmentBackendLinuxNativeBind:
 		if recovery {
 			if err := prepareMountResidueForRecovery(entry.MountPath); err != nil {
@@ -655,10 +696,6 @@ func formatTrustedBackendFailure(action string, selection trustedBackendSelectio
 	return fmt.Errorf("%s failed after auto selected %s: %w; auto diagnostics: %s", action, selection.Backend, err, strings.Join(selection.Diagnostics, "; "))
 }
 
-func (a *App) warnSymlinkAttachment() {
-	_, _ = fmt.Fprintln(a.Stderr, symlinkAttachmentWarning())
-}
-
 func prepareMountResidueForRecovery(path string) error {
 	if _, err := os.Lstat(path); err != nil {
 		if os.IsNotExist(err) {
@@ -681,6 +718,13 @@ func prepareMountResidueForRecovery(path string) error {
 
 func (a *App) reconcileManagedWorktree(primaryRoot string, cfg Config, manifest Manifest, entry ManagedWorktreeEntry) (RealizationStatus, error) {
 	realization := InspectManagedWorktreeRealization(manifest, entry, a.Runner)
+	if isAttachedDirtyManagedWorktree(realization) {
+		if err := addManagedWorkspaceIgnorePath(primaryRoot, entry.WorkspacePath); err != nil {
+			return RealizationAttached, err
+		}
+		_, _ = fmt.Fprintf(a.Stdout, "%s Managed worktree already attached: %s\n", ansiGreenBold+"✓"+ansiReset, ansiCyanBold+entry.RepoRef+ansiReset)
+		return RealizationAttached, nil
+	}
 	switch realization.Status {
 	case RealizationAttached:
 		if err := addManagedWorkspaceIgnorePath(primaryRoot, entry.WorkspacePath); err != nil {
@@ -693,6 +737,9 @@ func (a *App) reconcileManagedWorktree(primaryRoot string, cfg Config, manifest 
 		return RealizationInvalid, nil
 	case RealizationUnmounted:
 		if err := a.recoverManagedWorktree(primaryRoot, cfg, manifest, entry, realization); err != nil {
+			return RealizationUnmounted, err
+		}
+		if err := addManagedWorkspaceIgnorePath(primaryRoot, entry.WorkspacePath); err != nil {
 			return RealizationUnmounted, err
 		}
 		_, _ = fmt.Fprintf(a.Stdout, "%s Managed worktree recovered: %s\n", ansiGreenBold+"✓"+ansiReset, ansiCyanBold+entry.RepoRef+ansiReset)
@@ -718,7 +765,7 @@ func (a *App) recoverManagedWorktree(primaryRoot string, cfg Config, manifest Ma
 			if err := writeWorkspace(primaryRoot, previous, manifest, cfg.ProjectsDirName); err != nil {
 				return err
 			}
-			return addManagedWorkspaceIgnorePath(primaryRoot, entry.WorkspacePath)
+			return nil
 		}
 	}
 	if realization.Inspection.State != ManagedWorktreeMissing {
@@ -882,6 +929,12 @@ func (a *App) dismissRepoEntry(cwd string, primaryRoot string, ref string, cfg C
 		}
 		if entry.Backend == AttachmentBackendSymlink || entry.Backend == "" {
 			return fmt.Errorf("trusted attachment %s has empty mount_path and cannot be dismissed safely", entry.RepoRef)
+		}
+	}
+
+	if entry.TrustClass == TrustClassTrusted {
+		if err := a.removeTrustedAgentAccess(primaryRoot, entry); err != nil {
+			return err
 		}
 	}
 

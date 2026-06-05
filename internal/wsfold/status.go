@@ -230,7 +230,7 @@ func statusManagedWorktreeRow(manifest Manifest, entry ManagedWorktreeEntry, run
 	entry.PrimaryMountPath = filepath.Clean(entry.PrimaryMountPath)
 
 	realization := InspectManagedWorktreeRealization(manifest, entry, runner)
-	if realization.Inspection.State == ManagedWorktreeDirtyBlocked && realization.Inspection.Dirty {
+	if isAttachedDirtyManagedWorktree(realization) {
 		row.State = RealizationAttached
 		row.Detail = fmt.Sprintf("branch %s, primary %s, has local changes", entry.Branch, entry.PrimaryRepoRef)
 		row.Action = "-"
@@ -258,6 +258,10 @@ func statusDetail(reason string) string {
 		return "ok"
 	}
 	return reason
+}
+
+func isAttachedDirtyManagedWorktree(realization ManagedWorktreeRealization) bool {
+	return realization.Inspection.State == ManagedWorktreeDirtyBlocked && realization.Inspection.Dirty
 }
 
 func summarizeStatusRows(rows []StatusRow) StatusSummary {

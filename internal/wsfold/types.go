@@ -119,6 +119,7 @@ type WorkspaceCache struct {
 	SchemaVersion int                  `yaml:"schema_version"`
 	Trusted       []TrustedCacheEntry  `yaml:"trusted,omitempty"`
 	External      []ExternalCacheEntry `yaml:"external,omitempty"`
+	AgentAccess   []AgentAccessEntry   `yaml:"agent_access,omitempty"`
 }
 
 type TrustedCacheEntry struct {
@@ -130,4 +131,13 @@ type TrustedCacheEntry struct {
 type ExternalCacheEntry struct {
 	Ref          string `yaml:"ref"`
 	CheckoutPath string `yaml:"checkout_path"`
+}
+
+type AgentAccessEntry struct {
+	Agent        string `yaml:"agent"`
+	Scope        string `yaml:"scope"`
+	ConfigPath   string `yaml:"config_path"`
+	RepoRef      string `yaml:"repo_ref"`
+	CheckoutPath string `yaml:"checkout_path"`
+	CreatedFile  bool   `yaml:"created_file,omitempty"`
 }

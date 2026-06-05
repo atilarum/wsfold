@@ -178,6 +178,50 @@ func TestManagedWorkspaceGitignoreLifecycleContract(t *testing.T) {
 	assertGitInfoExcludeUnchanged(t, excludePath, excludeBefore)
 }
 
+func TestSummonAllTreatsDirtyManagedWorktreeAsAttached(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	primaryCheckout := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(primaryCheckout)
+	h.RunGit(primaryCheckout, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.RunGit(primaryCheckout, "branch", "feature/dirty")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Worktree(h.Workspace, "service", "feature/dirty", WorktreeOptions{}); err != nil {
+		t.Fatalf("Worktree returned error: %v", err)
+	}
+
+	worktreePath := filepath.Join(h.Workspace, "service-feature-dirty")
+	if err := os.WriteFile(filepath.Join(worktreePath, "dirty.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatalf("write dirty file: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	app.Stdout = &stdout
+	if err := app.SummonAll(h.Workspace); err != nil {
+		t.Fatalf("SummonAll returned error for dirty attached worktree: %v", err)
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "Managed worktree already attached:") {
+		t.Fatalf("expected dirty managed worktree to be reported as already attached, got:\n%s", output)
+	}
+	if strings.Contains(output, "Managed worktree invalid:") ||
+		strings.Contains(output, "has staged, unstaged, or untracked changes") ||
+		strings.Contains(output, "has local changes") {
+		t.Fatalf("summon-all should not warn about dirty attached managed worktrees, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Reconciliation complete: 2 attached, 0 recovered, 0 invalid, 0 failed") {
+		t.Fatalf("expected dirty managed worktree to count as attached, got:\n%s", output)
+	}
+	if status := h.RunGit(worktreePath, "status", "--short"); !strings.Contains(status, "dirty.txt") {
+		t.Fatalf("dirty worktree change should be preserved, got status:\n%s", status)
+	}
+}
+
 func TestSummonRecoversDeclaredSymlinkAttachment(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnv(t, h)
@@ -328,7 +372,7 @@ func TestAutoMountedAttachFailureDoesNotFallback(t *testing.T) {
 	}
 }
 
-func TestAutoSymlinkFallbackWarns(t *testing.T) {
+func TestAutoSymlinkFallbackDoesNotWarn(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnv(t, h)
 	t.Setenv("WSFOLD_MOUNT_BACKEND", "auto")
@@ -357,9 +401,8 @@ func TestAutoSymlinkFallbackWarns(t *testing.T) {
 	if !strings.Contains(string(cacheBytes), "backend: symlink") {
 		t.Fatalf("expected symlink backend in cache, got:\n%s", string(cacheBytes))
 	}
-	warning := stderr.String()
-	if !strings.Contains(warning, "symlink trusted attachment") || !strings.Contains(warning, "CAP_SYS_ADMIN") || !strings.Contains(warning, "--security-opt apparmor=unconfined") {
-		t.Fatalf("expected devcontainer symlink warning, got:\n%s", warning)
+	if stderr.String() != "" {
+		t.Fatalf("expected no separate symlink warning, got:\n%s", stderr.String())
 	}
 }
 
@@ -1274,7 +1317,7 @@ func TestWorktreeRejectsBranchAlreadyCheckedOutByWorktreeBeforeGitAdd(t *testing
 	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
 
 	err := app.Worktree(h.Workspace, "service", "dg", WorktreeOptions{})
-	if err == nil || !strings.Contains(err.Error(), `branch "dg" is already checked out by worktree at `+cleanAbsPath(existingWorktree)) {
+	if err == nil || !strings.Contains(err.Error(), `branch "dg" is already checked out by worktree at `) || !strings.Contains(err.Error(), filepath.Base(existingWorktree)) {
 		t.Fatalf("expected existing worktree branch refusal, got %v", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(h.Workspace, "service-dg")); !os.IsNotExist(statErr) {
@@ -1466,7 +1509,8 @@ func TestDismissManagedWorktreeRefusesStaleManifestPathWhenBranchStillCheckedOut
 
 	err = app.Dismiss(h.Workspace, "acme/service/feature/worktree")
 	if err == nil ||
-		!strings.Contains(err.Error(), "branch feature/worktree for acme/service is already registered at "+cleanAbsPath(worktreePath)) ||
+		!strings.Contains(err.Error(), "branch feature/worktree for acme/service is already registered at ") ||
+		!strings.Contains(err.Error(), filepath.Base(worktreePath)) ||
 		!strings.Contains(err.Error(), "but this workspace expects "+cleanAbsPath(manifest.ManagedWorktrees[0].WorkspacePath)) ||
 		!strings.Contains(err.Error(), "changes") {
 		t.Fatalf("expected stale path dirty worktree refusal, got %v", err)
@@ -2432,6 +2476,7 @@ func setEnv(t *testing.T, h *testutil.Harness) {
 	}
 	t.Setenv("WSFOLD_PROJECTS_DIR", ".")
 	t.Setenv("WSFOLD_MOUNT_BACKEND", "symlink")
+	t.Setenv("HOME", filepath.Join(h.Root, "home"))
 }
 
 func setEnvWithProjectsDir(t *testing.T, h *testutil.Harness, projectsDir string) {
@@ -2442,6 +2487,7 @@ func setEnvWithProjectsDir(t *testing.T, h *testutil.Harness, projectsDir string
 	}
 	t.Setenv("WSFOLD_PROJECTS_DIR", projectsDir)
 	t.Setenv("WSFOLD_MOUNT_BACKEND", "symlink")
+	t.Setenv("HOME", filepath.Join(h.Root, "home"))
 }
 
 func appRunnerWithFakeCommands(t *testing.T, h *testutil.Harness, names ...string) Runner {
@@ -2462,14 +2508,12 @@ func assertManagedGitignorePaths(t *testing.T, primaryRoot string, want ...strin
 		t.Fatalf("read .gitignore: %v", err)
 	}
 	text := string(data)
-	const beginMarker = "# BEGIN WSFOLD MANAGED WORKSPACE PATHS"
-	const endMarker = "# END WSFOLD MANAGED WORKSPACE PATHS"
-	begin := strings.Index(text, beginMarker)
-	end := strings.Index(text, endMarker)
+	begin := strings.Index(text, managedWorkspaceGitignoreBeginMarker)
+	end := strings.Index(text, managedWorkspaceGitignoreEndMarker)
 	if begin < 0 || end < 0 || end < begin {
 		t.Fatalf("expected managed .gitignore block, got:\n%s", text)
 	}
-	block := text[begin+len(beginMarker) : end]
+	block := text[begin+len(managedWorkspaceGitignoreBeginMarker) : end]
 	got := make([]string, 0)
 	for _, line := range strings.Split(block, "\n") {
 		line = strings.TrimSpace(line)
@@ -2489,7 +2533,7 @@ func assertNoManagedGitignoreBlock(t *testing.T, primaryRoot string) {
 		t.Fatalf("read .gitignore: %v", err)
 	}
 	text := string(data)
-	for _, marker := range []string{"# BEGIN WSFOLD MANAGED WORKSPACE PATHS", "# END WSFOLD MANAGED WORKSPACE PATHS"} {
+	for _, marker := range []string{managedWorkspaceGitignoreBeginMarker, managedWorkspaceGitignoreEndMarker} {
 		if strings.Contains(text, marker) {
 			t.Fatalf("expected managed .gitignore block to be removed, got:\n%s", text)
 		}
@@ -2534,11 +2578,12 @@ func assertWorkspaceDoesNotCreateExcludes(t *testing.T, primaryRoot string) {
 	t.Helper()
 	data, err := os.ReadFile(workspacePath(primaryRoot))
 	if err != nil {
-		t.Fatalf("read workspace file: %v", err)
+		t.Fatalf("read workspace: %v", err)
 	}
-	for _, forbidden := range []string{`"files.exclude"`, `"files.watcherExclude"`, `"search.exclude"`} {
-		if strings.Contains(string(data), forbidden) {
-			t.Fatalf("workspace should not create VS Code exclude setting %s:\n%s", forbidden, string(data))
+	text := string(data)
+	for _, unexpected := range []string{`"files.exclude"`, `"files.watcherExclude"`, `"search.exclude"`} {
+		if strings.Contains(text, unexpected) {
+			t.Fatalf("workspace should not create VS Code excludes %q:\n%s", unexpected, text)
 		}
 	}
 }
@@ -2722,7 +2767,7 @@ func assertManagedWorktreeControlPath(t *testing.T, primaryPath string, worktree
 	if err != nil {
 		t.Fatalf("read managed worktree admin backref: %v", err)
 	}
-	if got, want := filepath.Clean(strings.TrimSpace(string(backref))), filepath.Clean(filepath.Join(worktreePath, ".git")); !sameFilesystemPath(got, want) {
+	if got, want := filepath.Clean(strings.TrimSpace(string(backref))), filepath.Clean(filepath.Join(worktreePath, ".git")); !samePath(got, want) {
 		t.Fatalf("unexpected worktree admin backref: got %s want %s", got, want)
 	}
 }

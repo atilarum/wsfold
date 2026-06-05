@@ -213,7 +213,7 @@ func TestInspectManagedWorktreeRealizationDoesNotStatusUnavailableRegisteredPath
 		if strings.Join(args, " ") == "worktree list --porcelain" {
 			return fmt.Sprintf("worktree %s\nHEAD abc123\nbranch refs/heads/main\n\nworktree %s\nHEAD def456\nbranch refs/heads/feature/host\nprunable gitdir file points to non-existent location\n", repoPath, unavailablePath), nil
 		}
-		if sameFilesystemPath(dir, unavailablePath) && strings.Join(args, " ") == "status --porcelain" {
+		if samePath(dir, unavailablePath) && strings.Join(args, " ") == "status --porcelain" {
 			t.Fatalf("unavailable registered worktree path must not be inspected with git status")
 		}
 		return "", nil
@@ -277,7 +277,7 @@ func TestInspectManagedWorktreeRealizationReportsDifferentRegisteredPathWithoutO
 		case "worktree list --porcelain":
 			return fmt.Sprintf("worktree %s\nHEAD abc123\nbranch refs/heads/main\n\nworktree %s\nHEAD def456\nbranch refs/heads/feature/clean\n", repoPath, registeredPath), nil
 		case "status --porcelain":
-			if !sameFilesystemPath(dir, registeredPath) {
+			if !samePath(dir, registeredPath) {
 				t.Fatalf("unexpected status dir %s", dir)
 			}
 			return "", nil

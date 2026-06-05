@@ -196,16 +196,3 @@ func appArmorAllowsNativeBind(status string) bool {
 	}
 	return normalized == "unconfined"
 }
-
-func symlinkAttachmentWarning() string {
-	switch currentGOOS {
-	case "linux":
-		inContainer, err := containerDetector()
-		if err == nil && inContainer {
-			return "Warning: WSFold used a symlink trusted attachment. Symlink mode is weaker for workspace-visible trust boundaries. To enable native bind mounts in Linux devcontainers, add CAP_SYS_ADMIN and, when AppArmor blocks mount syscalls, use --security-opt apparmor=unconfined."
-		}
-		return "Warning: WSFold used a symlink trusted attachment. Symlink mode is weaker for workspace-visible trust boundaries. On Linux hosts, configure FUSE3 with bindfs, fusermount3, and a usable /dev/fuse to enable mounted attachments."
-	default:
-		return "Warning: WSFold used a symlink trusted attachment. Symlink mode is weaker for workspace-visible trust boundaries. No production mounted backend is available for this platform yet, so symlink remains the compatibility fallback."
-	}
-}

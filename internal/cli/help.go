@@ -103,6 +103,12 @@ var envHelpEntries = []envHelpEntry{
 		Default:     "auto",
 		Description: "trusted attach backend policy; supported values: auto, symlink, linux-fuse-bind, linux-native-bind",
 	},
+	{
+		Name:        "WSFOLD_ADD_AGENT_DIRS",
+		Required:    false,
+		Default:     "true",
+		Description: "set to false to disable Codex and Claude project access config updates",
+	},
 }
 
 func writeHelp(w io.Writer) error {
@@ -137,7 +143,8 @@ func helpText() string {
 	b.WriteString("linux-native-bind for configured Linux devcontainers, then linux-fuse-bind for Linux hosts with FUSE3, bindfs,\n")
 	b.WriteString("fusermount3, and a usable /dev/fuse. Existing .wsfold/cache.yaml rows keep their concrete backend until deleted.\n")
 	b.WriteString("linux-fuse-bind runs bindfs --no-allow-other and detaches with fusermount3 -u.\n")
-	b.WriteString("Symlink fallback is supported but warns because it is weaker for workspace-visible trust boundaries.\n")
+	b.WriteString("Symlink fallback is supported and persists across restarts; on macOS it is the supported production path until a native mounted backend ships.\n")
+	b.WriteString("Trusted attachments also update Codex and Claude project-local access config by default; set WSFOLD_ADD_AGENT_DIRS=false to opt out.\n")
 	b.WriteString("Set WSFOLD_MOUNT_BACKEND=linux-fuse-bind, WSFOLD_MOUNT_BACKEND=linux-native-bind, or WSFOLD_MOUNT_BACKEND=symlink to force a concrete backend.\n")
 	b.WriteString("Linux devcontainers need CAP_SYS_ADMIN, usable sudo mount --bind, and may need --security-opt apparmor=unconfined for native bind mounts.\n")
 	b.WriteString("Docker users who choose linux-fuse-bind inside a container must expose /dev/fuse and add CAP_SYS_ADMIN.\n\n")
