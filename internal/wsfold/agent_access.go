@@ -301,8 +301,7 @@ func (a *App) removeAgentAccessRecord(primaryRoot string, record AgentAccessEntr
 }
 
 func realCheckoutPath(path string) (string, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
+	if strings.TrimSpace(path) == "" {
 		return "", fmt.Errorf("trusted checkout path is empty")
 	}
 	abs, err := filepath.Abs(path)
@@ -444,9 +443,17 @@ func removeAgentAccessCacheRecord(primaryRoot string, record AgentAccessEntry) e
 func normalizeAgentAccessRecord(record AgentAccessEntry) AgentAccessEntry {
 	record.Agent = strings.TrimSpace(record.Agent)
 	record.Scope = strings.TrimSpace(record.Scope)
-	record.ConfigPath = filepath.Clean(strings.TrimSpace(record.ConfigPath))
+	if strings.TrimSpace(record.ConfigPath) == "" {
+		record.ConfigPath = ""
+	} else {
+		record.ConfigPath = filepath.Clean(record.ConfigPath)
+	}
 	record.RepoRef = strings.TrimSpace(record.RepoRef)
-	record.CheckoutPath = filepath.Clean(strings.TrimSpace(record.CheckoutPath))
+	if strings.TrimSpace(record.CheckoutPath) == "" {
+		record.CheckoutPath = ""
+	} else {
+		record.CheckoutPath = filepath.Clean(record.CheckoutPath)
+	}
 	return record
 }
 
@@ -474,8 +481,7 @@ func samePhysicalPath(left string, right string) bool {
 }
 
 func canonicalComparePath(path string) string {
-	path = strings.TrimSpace(path)
-	if path == "" {
+	if strings.TrimSpace(path) == "" {
 		return ""
 	}
 	return cleanAbsPath(path)

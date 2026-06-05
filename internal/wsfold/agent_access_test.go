@@ -45,6 +45,50 @@ func TestAgentAccessProjectLocalCodexAndClaudeLifecycle(t *testing.T) {
 	}
 }
 
+func TestAgentAccessPreservesCheckoutPathTrailingSpace(t *testing.T) {
+	h := newAgentAccessHarness(t)
+	service := filepath.Join(h.TrustedRoot, "service ")
+	h.InitRepo(service)
+	h.RunGit(service, "remote", "add", "origin", "https://github.com/acme/service.git")
+
+	app := newAgentAccessApp(h)
+	if err := app.Summon(h.Workspace, "acme/service"); err != nil {
+		t.Fatalf("Summon returned error: %v", err)
+	}
+
+	root := mustRealPath(t, service)
+	trimmedRoot := strings.TrimSuffix(root, " ")
+	if trimmedRoot == root {
+		t.Fatalf("test setup root should end with a space: %q", root)
+	}
+	if samePhysicalPath(root, trimmedRoot) {
+		t.Fatalf("paths that differ by trailing space should not compare equal: %q %q", root, trimmedRoot)
+	}
+	codexPath := filepath.Join(h.Workspace, ".codex", "config.toml")
+	claudePath := filepath.Join(h.Workspace, ".claude", "settings.local.json")
+	assertFileContains(t, codexPath, root)
+	assertClaudeDirectories(t, claudePath, root)
+
+	cache, err := loadWorkspaceCache(h.Workspace)
+	if err != nil {
+		t.Fatalf("load cache: %v", err)
+	}
+	if len(cache.Trusted) != 1 {
+		t.Fatalf("expected one trusted cache entry, got %#v", cache.Trusted)
+	}
+	if cache.Trusted[0].CheckoutPath != service {
+		t.Fatalf("checkout path was not preserved exactly: got %q want %q", cache.Trusted[0].CheckoutPath, service)
+	}
+	if len(cache.AgentAccess) != 2 {
+		t.Fatalf("expected two agent access cache entries, got %#v", cache.AgentAccess)
+	}
+	for _, entry := range cache.AgentAccess {
+		if entry.CheckoutPath != root {
+			t.Fatalf("agent access checkout path was not preserved exactly: got %q want %q", entry.CheckoutPath, root)
+		}
+	}
+}
+
 func TestAgentAccessPreservesUserOwnedProjectEntriesAndTargetedDismiss(t *testing.T) {
 	h := newAgentAccessHarness(t)
 	service := createTrustedRepo(t, h, "service")
