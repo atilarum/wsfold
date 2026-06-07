@@ -1,5 +1,9 @@
 # WSFold - Workspace Composition Tool
 
+Compose task-shaped multi-repo workspaces from trusted Git repositories.
+
+![WSFold summon demo](docs/assets/wsfold-summon.gif)
+
 ## The Problem
 
 Real software systems often require changes that span multiple repositories, and even when work stays within a single service, doing it correctly still depends on a clear understanding of neighboring systems.
