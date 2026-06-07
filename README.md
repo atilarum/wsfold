@@ -1,11 +1,4 @@
-# WSFold - Workspace Composition Tool
-
-<table>
-  <tr>
-    <td><img src="docs/assets/wsfold-logo-full.png" alt="WSFold logo" width="260"></td>
-    <td><h3>Compose task-shaped multi-repo workspaces from trusted Git repositories.</h3></td>
-  </tr>
-</table>
+![WSFold logo and slogan: Compose task-shaped multi-repo workspaces from trusted Git repositories](docs/assets/wsfold-header.png)
 
 ![WSFold summon demo](docs/assets/wsfold-summon.gif)
 
