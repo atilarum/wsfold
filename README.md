@@ -1,10 +1,8 @@
 # WSFold - Workspace Composition Tool
 
-Compose task-shaped multi-repo workspaces from trusted local Git repositories.
+Compose task-shaped multi-repo workspaces from trusted Git repositories.
 
-<p align="center">
-  <img src="docs/assets/wsfold-summon.gif" alt="WSFold summon demo" width="900">
-</p>
+![WSFold summon demo](docs/assets/wsfold-summon.gif)
 
 ## The Problem
 
