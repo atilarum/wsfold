@@ -1,0 +1,4 @@
+interface:
+  display_name: "WSFold"
+  short_description: "Use WSFold for repo workspaces"
+  default_prompt: "Use $wsfold to find, summon, inspect, worktree, and dismiss repositories safely."

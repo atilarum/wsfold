@@ -190,42 +190,7 @@ func (a *App) ReindexTrusted() error {
 }
 
 func (a *App) Init(cwd string) error {
-	primaryRoot, err := currentWorkspaceRoot(cwd)
-	if err != nil {
-		return err
-	}
-	if _, err := os.Stat(manifestPath(primaryRoot)); err == nil {
-		_, _ = fmt.Fprintf(a.Stdout, "already initialized %s\n", primaryRoot)
-		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("inspect manifest: %w", err)
-	}
-
-	cfg, err := LoadConfig()
-	if err != nil {
-		return err
-	}
-
-	manifest := Manifest{
-		Version:          manifestVersion,
-		PrimaryRoot:      primaryRoot,
-		Trusted:          []Entry{},
-		External:         []Entry{},
-		ManagedWorktrees: []ManagedWorktreeEntry{},
-	}
-
-	if err := saveManifest(primaryRoot, manifest); err != nil {
-		return err
-	}
-	if err := ensureCacheIgnored(primaryRoot); err != nil {
-		return err
-	}
-	if err := writeWorkspace(primaryRoot, Manifest{}, manifest, cfg.ProjectsDirName); err != nil {
-		return err
-	}
-
-	_, _ = fmt.Fprintf(a.Stdout, "initialized %s\n", primaryRoot)
-	return nil
+	return a.InitWithOptions(cwd, InitOptions{})
 }
 
 func ensureCacheIgnored(primaryRoot string) error {

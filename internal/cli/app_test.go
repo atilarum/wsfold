@@ -41,6 +41,11 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(output, "LLM agents get a targeted working context instead of the full repo universe, and humans see that") {
 		t.Fatalf("help output did not contain purpose paragraph tail: %q", output)
 	}
+	if !strings.Contains(output, "Install WSFold with Homebrew, GitHub Releases, or by asking an agent to follow the README") ||
+		!strings.Contains(output, "WSFold marketplace plugin after installation") ||
+		!strings.Contains(output, "summon, worktree, and dismiss workflows") {
+		t.Fatalf("help output did not describe installation and marketplace roles: %q", output)
+	}
 	if !strings.Contains(output, "Usage:") {
 		t.Fatalf("help output did not contain usage block: %q", output)
 	}
@@ -52,6 +57,11 @@ func TestRunHelp(t *testing.T) {
 	}
 	if !strings.Contains(output, "`wsfold worktree` is trusted-only. It summons the primary repository first, then creates a managed worktree in the active workspace.") {
 		t.Fatalf("help output did not contain worktree command note: %q", output)
+	}
+	if !strings.Contains(output, "`wsfold init` initializes the current directory and installs the local WSFold skill under .agents/skills") ||
+		!strings.Contains(output, "--no-skills") ||
+		!strings.Contains(output, "--refresh-skills") {
+		t.Fatalf("help output did not contain init skill guidance: %q", output)
 	}
 	if !strings.Contains(output, "run `wsfold dismiss <repo-ref>` from the workspace root rather than from inside the mounted folder") {
 		t.Fatalf("help output did not contain bind dismiss cwd guidance: %q", output)
@@ -92,6 +102,9 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(output, "Examples:") || !strings.Contains(output, `eval "$(wsfold completion zsh)"`) {
 		t.Fatalf("help output did not contain examples section: %q", output)
 	}
+	if !strings.Contains(output, "wsfold init --no-skills") || !strings.Contains(output, "wsfold init --refresh-skills") {
+		t.Fatalf("help output did not contain init skill flag examples: %q", output)
+	}
 	if strings.Contains(output, "wsfold summon org_name/billing-service/branch-name") {
 		t.Fatalf("help output should not contain summon worktree creation example: %q", output)
 	}
@@ -107,7 +120,7 @@ func TestRunHelp(t *testing.T) {
 		"wsfold dismiss [repo-ref]",
 		"wsfold worktree [repo-ref] [branch]",
 		"wsfold remove-worktrees",
-		"wsfold init",
+		"wsfold init [--no-skills|--refresh-skills]",
 		"wsfold reindex",
 		"wsfold completion zsh",
 		"wsfold --version",
@@ -132,7 +145,7 @@ func TestRunHelp(t *testing.T) {
 		"dismiss           remove a repository or clean managed worktree from the composition",
 		"worktree          create a workspace-local managed Git worktree",
 		"remove-worktrees  remove clean external Git worktrees for trusted repositories",
-		"init              initialize the current directory as a wsfold workspace",
+		"init              initialize a workspace and the local WSFold agent skill",
 		"reindex           refresh the trusted GitHub remote cache",
 		"completion        print shell autocompletion setup",
 	}
@@ -234,6 +247,72 @@ func TestRunInitRejectsExtraArgs(t *testing.T) {
 	err := Run([]string{"init", "extra"}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "init does not accept positional arguments") {
 		t.Fatalf("unexpected init error: %v", err)
+	}
+}
+
+func TestRunInitNoSkillsSkipsLocalSkillInstallation(t *testing.T) {
+	h := testutil.NewHarness(t)
+	for _, env := range h.Env() {
+		key, value, _ := strings.Cut(env, "=")
+		t.Setenv(key, value)
+	}
+	t.Setenv("WSFOLD_PROJECTS_DIR", ".")
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "symlink")
+	t.Chdir(h.Workspace)
+
+	if err := Run([]string{"init", "--no-skills"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run init --no-skills returned error: %v", err)
+	}
+	for _, path := range []string{
+		filepath.Join(h.Workspace, ".agents", "skills"),
+		filepath.Join(h.Workspace, ".claude", "skills"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("init --no-skills should not create %s, got %v", path, err)
+		}
+	}
+}
+
+func TestRunInitRefreshSkillsReplacesBundledSkillDirs(t *testing.T) {
+	h := testutil.NewHarness(t)
+	for _, env := range h.Env() {
+		key, value, _ := strings.Cut(env, "=")
+		t.Setenv(key, value)
+	}
+	t.Setenv("WSFOLD_PROJECTS_DIR", ".")
+	t.Setenv("WSFOLD_MOUNT_BACKEND", "symlink")
+	t.Chdir(h.Workspace)
+
+	if err := Run([]string{"init"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run init returned error: %v", err)
+	}
+	skillPath := filepath.Join(h.Workspace, ".agents", "skills", "wsfold", "SKILL.md")
+	userEdit := []byte("---\nname: wsfold\ndescription: user edit\n---\n# edited\n")
+	if err := os.WriteFile(skillPath, userEdit, 0o644); err != nil {
+		t.Fatalf("write local skill edit: %v", err)
+	}
+
+	if err := Run([]string{"init", "--refresh-skills"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run init --refresh-skills returned error: %v", err)
+	}
+	refreshed, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatalf("read refreshed skill: %v", err)
+	}
+	if bytes.Equal(refreshed, userEdit) {
+		t.Fatalf("init --refresh-skills should replace the bundled skill directory")
+	}
+	if !strings.Contains(string(refreshed), "name: wsfold") {
+		t.Fatalf("refreshed skill missing WSFold skill content:\n%s", refreshed)
+	}
+}
+
+func TestRunInitRejectsConflictingSkillFlags(t *testing.T) {
+	t.Parallel()
+
+	err := Run([]string{"init", "--no-skills", "--refresh-skills"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "--no-skills and --refresh-skills cannot be used together") {
+		t.Fatalf("unexpected init flag conflict error: %v", err)
 	}
 }
 
@@ -345,7 +424,7 @@ func TestRunCompletionZsh(t *testing.T) {
 	if !strings.Contains(stdout.String(), "compdef _wsfold wsfold") {
 		t.Fatalf("unexpected completion output: %q", stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "init:initialize the current directory as a wsfold workspace") {
+	if !strings.Contains(stdout.String(), "init:initialize a workspace and the local WSFold agent skill") {
 		t.Fatalf("completion output did not contain aligned init description: %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "reindex:refresh the trusted GitHub remote cache") {

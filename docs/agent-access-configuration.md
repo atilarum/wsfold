@@ -1,0 +1,7 @@
+# Agent Access Configuration
+
+Trusted repositories attached with `wsfold summon` or reconciled with `wsfold summon-all` are also added to local coding-agent access configuration by default. This lets agents that enforce filesystem trust boundaries edit the real trusted checkout path even when the workspace root contains a symlink or mounted attachment. Current Codex or Claude Code sessions may need to be restarted or reopened before they reload newly written config.
+
+For Codex, WSFold prefers project-local `.codex/config.toml` and writes trusted checkout paths to `sandbox_workspace_write.writable_roots`. When WSFold creates or manages that project-local Codex file as machine-local config, it adds `.codex/config.toml` to `.gitignore`. If `.codex/config.toml` already exists and is not ignored by Git, WSFold treats it as shared project config, leaves it unchanged, and writes the root to `~/.codex/config.toml` instead. In that fallback mode WSFold prints the exact home config path it modified, and `wsfold dismiss` does not automatically remove the global Codex root.
+
+For Claude Code, WSFold writes trusted checkout paths to `.claude/settings.local.json` under `permissions.additionalDirectories` and adds `.claude/settings.local.json` to `.gitignore`. WSFold preserves user-owned entries in both Codex and Claude files and removes only roots it recorded as WSFold-owned project-local entries.

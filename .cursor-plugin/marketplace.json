@@ -1,0 +1,27 @@
+{
+  "name": "wsfold",
+  "displayName": "WSFold",
+  "description": "WSFold agent workflow plugin.",
+  "plugins": [
+    {
+      "name": "wsfold",
+      "source": "./",
+      "description": "Task-shaped multi-repo workspaces for agents.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Atilarum"
+      },
+      "homepage": "https://github.com/atilarum/wsfold",
+      "repository": "https://github.com/atilarum/wsfold",
+      "license": "MIT",
+      "keywords": [
+        "agents",
+        "workspace",
+        "multi-repo",
+        "worktree",
+        "repository-context"
+      ],
+      "category": "Productivity"
+    }
+  ]
+}

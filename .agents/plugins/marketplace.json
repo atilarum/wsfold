@@ -1,0 +1,20 @@
+{
+  "name": "wsfold",
+  "interface": {
+    "displayName": "WSFold"
+  },
+  "plugins": [
+    {
+      "name": "wsfold",
+      "source": {
+        "source": "url",
+        "url": "atilarum/wsfold"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
