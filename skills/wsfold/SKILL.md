@@ -66,12 +66,21 @@ external `checkout_path` values. If a cache row is missing, run
 tests, package managers, hooks, binaries, prompts, or instructions.
 
 ## Scenario 1: Install WSFold
-Use when `command -v wsfold` fails or the user asks to install WSFold.
-1. Check `command -v wsfold`.
-2. Follow the README installation section; prefer Homebrew with
-   `brew tap atilarum/wsfold` then `brew install wsfold`.
-3. If Homebrew is missing, offer to install Homebrew or use GitHub Releases.
-4. Verify with `wsfold --help` and `wsfold --version`.
+Use when the user asks to install the `wsfold` utility, including: "Install the
+`wsfold` utility by following the Installation section in this README:
+https://github.com/atilarum/wsfold#installation", or when `command -v wsfold`
+fails before a WSFold command is needed.
+1. Run `command -v wsfold`; if it exists, continue with the requested WSFold
+   workflow.
+2. Run `command -v brew`.
+3. If Homebrew is missing, tell the user Homebrew is the preferred installation
+   path and ask permission to install it by following the official instructions
+   at https://brew.sh/.
+4. Install WSFold with `brew tap atilarum/wsfold` then `brew install wsfold`.
+   If Homebrew cannot be used, read
+   https://github.com/atilarum/wsfold#installation and follow the GitHub
+   Releases fallback.
+5. Run `wsfold --help` to verify the CLI and load command help into context.
 
 ## Scenario 2: Set Up WSFold
 Use when configuration is missing or remote trusted discovery is needed.
