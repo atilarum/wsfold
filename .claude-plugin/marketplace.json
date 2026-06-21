@@ -7,7 +7,7 @@
   "plugins": [
     {
       "name": "wsfold",
-      "source": "./",
+      "source": "./plugins/wsfold",
       "description": "Task-shaped multi-repo workspaces for agents.",
       "version": "1.0.0",
       "author": {

@@ -156,7 +156,7 @@ func localSkillPathState(path string) (bool, bool, error) {
 }
 
 func copyEmbeddedSkillDir(name string, destination string) error {
-	source := path.Join("skills", name)
+	source := path.Join("plugins", "wsfold", "skills", name)
 	return fs.WalkDir(skillbundle.AgentSkills, source, func(current string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err

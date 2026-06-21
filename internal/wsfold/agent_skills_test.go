@@ -21,9 +21,9 @@ var expectedAgentSkillNames = []string{"wsfold"}
 func TestAgentSkillDistributionPluginManifests(t *testing.T) {
 	root := repoRootForTest(t)
 	for _, path := range []string{
-		filepath.Join(root, ".codex-plugin", "plugin.json"),
-		filepath.Join(root, ".claude-plugin", "plugin.json"),
-		filepath.Join(root, ".cursor-plugin", "plugin.json"),
+		filepath.Join(root, "plugins", "wsfold", ".codex-plugin", "plugin.json"),
+		filepath.Join(root, "plugins", "wsfold", ".claude-plugin", "plugin.json"),
+		filepath.Join(root, "plugins", "wsfold", ".cursor-plugin", "plugin.json"),
 	} {
 		manifest := readJSONMap(t, path)
 		if got := stringField(manifest, "name"); got != "wsfold" {
@@ -46,23 +46,31 @@ func TestAgentSkillDistributionPluginManifests(t *testing.T) {
 		}
 	}
 
-	codex := readJSONMap(t, filepath.Join(root, ".codex-plugin", "plugin.json"))
+	codex := readJSONMap(t, filepath.Join(root, "plugins", "wsfold", ".codex-plugin", "plugin.json"))
 	codexInterface := codex["interface"].(map[string]any)
-	if got := stringField(codexInterface, "composerIcon"); got != "./docs/assets/wsfold-logo-icon.png" {
+	if got := stringField(codexInterface, "composerIcon"); got != "./icons/composer-icon.png" {
 		t.Fatalf("Codex composerIcon = %q, want WSFold icon", got)
 	}
-	if got := stringField(codexInterface, "logo"); got != "./docs/assets/wsfold-logo-icon.png" {
+	if got := stringField(codexInterface, "logo"); got != "./icons/logo.png" {
 		t.Fatalf("Codex logo = %q, want WSFold icon", got)
 	}
 
-	cursor := readJSONMap(t, filepath.Join(root, ".cursor-plugin", "plugin.json"))
-	if got := stringField(cursor, "logo"); got != "./docs/assets/wsfold-logo-icon.png" {
+	cursor := readJSONMap(t, filepath.Join(root, "plugins", "wsfold", ".cursor-plugin", "plugin.json"))
+	if got := stringField(cursor, "logo"); got != "./icons/logo.png" {
 		t.Fatalf("Cursor logo = %q, want WSFold icon", got)
 	}
-	if _, err := os.Stat(filepath.Join(root, "docs", "assets", "wsfold-logo-icon.png")); err != nil {
-		t.Fatalf("expected WSFold icon asset: %v", err)
+	for _, path := range []string{
+		filepath.Join(root, "plugins", "wsfold", "icons", "composer-icon.png"),
+		filepath.Join(root, "plugins", "wsfold", "icons", "logo.png"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected WSFold icon asset %s: %v", path, err)
+		}
 	}
 
+	assertCodexMarketplaceSource(t, filepath.Join(root, ".agents", "plugins", "marketplace.json"), "./plugins/wsfold")
+	assertStringMarketplaceSource(t, filepath.Join(root, ".claude-plugin", "marketplace.json"), "./plugins/wsfold")
+	assertStringMarketplaceSource(t, filepath.Join(root, ".cursor-plugin", "marketplace.json"), "./plugins/wsfold")
 	assertSharedSkillDirs(t, root)
 }
 
@@ -163,10 +171,11 @@ func TestInitClaudeSkillsCopyFallbackWhenSymlinkFails(t *testing.T) {
 
 func TestAgentSkillMarketplaceValidatorAvailabilityIsClassified(t *testing.T) {
 	root := repoRootForTest(t)
+	pluginRoot := filepath.Join(root, "plugins", "wsfold")
 	results := []agentSkillValidationResult{
-		runOptionalValidator(t, "codex-plugin", os.Getenv("WSFOLD_CODEX_PLUGIN_VALIDATOR"), root),
-		runOptionalValidator(t, "claude-plugin", os.Getenv("WSFOLD_CLAUDE_PLUGIN_VALIDATOR"), filepath.Join(root, ".claude-plugin")),
-		runOptionalValidator(t, "cursor-plugin", os.Getenv("WSFOLD_CURSOR_PLUGIN_VALIDATOR"), filepath.Join(root, ".cursor-plugin")),
+		runOptionalValidator(t, "codex-plugin", os.Getenv("WSFOLD_CODEX_PLUGIN_VALIDATOR"), pluginRoot),
+		runOptionalValidator(t, "claude-plugin", os.Getenv("WSFOLD_CLAUDE_PLUGIN_VALIDATOR"), pluginRoot),
+		runOptionalValidator(t, "cursor-plugin", os.Getenv("WSFOLD_CURSOR_PLUGIN_VALIDATOR"), pluginRoot),
 	}
 
 	for _, result := range results {
@@ -212,7 +221,7 @@ func runOptionalValidator(t *testing.T, name string, validator string, target st
 
 func assertSharedSkillDirs(t *testing.T, root string) {
 	t.Helper()
-	entries, err := os.ReadDir(filepath.Join(root, "skills"))
+	entries, err := os.ReadDir(filepath.Join(root, "plugins", "wsfold", "skills"))
 	if err != nil {
 		t.Fatalf("read shared skills dir: %v", err)
 	}
@@ -227,7 +236,7 @@ func assertSharedSkillDirs(t *testing.T, root string) {
 		t.Fatalf("shared skills = %#v, want %#v", names, expectedAgentSkillNames)
 	}
 	for _, name := range expectedAgentSkillNames {
-		assertSkillFile(t, filepath.Join(root, "skills", name), name)
+		assertSkillFile(t, filepath.Join(root, "plugins", "wsfold", "skills", name), name)
 	}
 }
 
@@ -367,6 +376,40 @@ func readJSONMap(t *testing.T, path string) map[string]any {
 		t.Fatalf("parse %s: %v", path, err)
 	}
 	return out
+}
+
+func firstMarketplacePlugin(t *testing.T, path string) map[string]any {
+	t.Helper()
+	manifest := readJSONMap(t, path)
+	plugins, ok := manifest["plugins"].([]any)
+	if !ok || len(plugins) == 0 {
+		t.Fatalf("%s missing plugins array: %#v", path, manifest)
+	}
+	plugin, ok := plugins[0].(map[string]any)
+	if !ok {
+		t.Fatalf("%s first plugin is not an object: %#v", path, plugins[0])
+	}
+	return plugin
+}
+
+func assertCodexMarketplaceSource(t *testing.T, path string, want string) {
+	t.Helper()
+	plugin := firstMarketplacePlugin(t, path)
+	source, ok := plugin["source"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s plugin source is not an object: %#v", path, plugin["source"])
+	}
+	if got := stringField(source, "path"); got != want {
+		t.Fatalf("%s source.path = %q, want %q", path, got, want)
+	}
+}
+
+func assertStringMarketplaceSource(t *testing.T, path string, want string) {
+	t.Helper()
+	plugin := firstMarketplacePlugin(t, path)
+	if got := stringField(plugin, "source"); got != want {
+		t.Fatalf("%s source = %q, want %q", path, got, want)
+	}
 }
 
 func stringField(values map[string]any, field string) string {

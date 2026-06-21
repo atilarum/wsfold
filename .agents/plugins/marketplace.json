@@ -7,8 +7,8 @@
     {
       "name": "wsfold",
       "source": {
-        "source": "url",
-        "url": "atilarum/wsfold"
+        "source": "local",
+        "path": "./plugins/wsfold"
       },
       "policy": {
         "installation": "AVAILABLE",

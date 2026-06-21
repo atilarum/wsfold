@@ -17,7 +17,6 @@
     "repository-context"
   ],
   "skills": "./skills/",
-  "logo": "./docs/assets/wsfold-logo-icon.png",
   "interface": {
     "displayName": "WSFold",
     "shortDescription": "Task-shaped multi-repo workspaces for agents.",
@@ -32,6 +31,9 @@
     "defaultPrompt": [
       "Find and summon the repo needed for this task.",
       "Create a WSFold worktree for implementation."
-    ]
+    ],
+    "brandColor": "#0E7490",
+    "composerIcon": "./icons/composer-icon.png",
+    "logo": "./icons/logo.png"
   }
 }

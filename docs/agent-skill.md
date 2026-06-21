@@ -40,7 +40,7 @@ intentionally when shared agent onboarding belongs with the workspace.
 For global use, install this repository as a plugin marketplace in your coding
 agent, then install the WSFold plugin from that source. The repository includes
 plugin manifests and marketplace catalogs for Codex, Claude Code, and Cursor;
-each plugin manifest points at the shared `skills/` tree.
+each marketplace points at the shared plugin root under `plugins/wsfold`.
 
 After global installation, the `wsfold` skill can be available outside a single
 initialized workspace, depending on how your agent loads globally installed
@@ -57,7 +57,7 @@ Add the WSFold repository as a Codex plugin marketplace, then install the
 plugin from that marketplace:
 
 ```bash
-codex plugin marketplace add atilarum/wsfold
+codex plugin marketplace add atilarum/wsfold --sparse .agents --sparse plugins
 codex plugin add wsfold@wsfold
 ```
 
@@ -74,7 +74,7 @@ Add the WSFold repository as a Claude Code plugin marketplace, then install the
 plugin from that marketplace:
 
 ```bash
-claude plugin marketplace add atilarum/wsfold
+claude plugin marketplace add atilarum/wsfold --sparse .claude-plugin --sparse plugins
 claude plugin install wsfold@wsfold --scope user
 ```
 
@@ -87,7 +87,7 @@ If Claude Code is already running, reload plugins after installation:
 You can also run the same flow from inside Claude Code:
 
 ```text
-/plugin marketplace add atilarum/wsfold
+/plugin marketplace add atilarum/wsfold --sparse .claude-plugin --sparse plugins
 /plugin install wsfold@wsfold
 /reload-plugins
 ```
