@@ -139,7 +139,7 @@ func TestRunHelp(t *testing.T) {
 
 	commandOrder := []string{
 		"summon            ensure or recover one trusted repository or managed worktree",
-		"summon-all        reconcile every declared trusted attachment and managed worktree",
+		"summon-all        reconcile declared attachments, worktrees, and external cache",
 		"status            inspect declared workspace health without changing files",
 		"summon-external   add an external repository as a workspace root",
 		"dismiss           remove a repository or clean managed worktree from the composition",

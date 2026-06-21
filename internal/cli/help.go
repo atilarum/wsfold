@@ -28,7 +28,7 @@ var commandHelpEntries = []commandHelpEntry{
 	{
 		Name:        "summon-all",
 		Usage:       "wsfold summon-all",
-		Description: "reconcile every declared trusted attachment and managed worktree",
+		Description: "reconcile declared attachments, worktrees, and external cache",
 	},
 	{
 		Name:        "status",
@@ -136,7 +136,7 @@ func helpText() string {
 	b.WriteString("You can refer to a repository by its local folder name or GitHub owner/name. Managed worktrees use owner/name/branch after creation.\n\n")
 	b.WriteString("`wsfold status` is read-only preflight diagnostics for the current workspace. It reports entries declared in wsfold.yaml as `attached`, `unmounted`, or `invalid` without cloning, mounting, unmounting, repairing, or rewriting workspace files.\n\n")
 	b.WriteString("`wsfold init` initializes the current directory and installs the local WSFold skill under .agents/skills with a Claude entry under .claude/skills. Use --no-skills to skip local skill installation, or --refresh-skills to replace the bundled WSFold skill directory from the current binary.\n\n")
-	b.WriteString("`wsfold summon` is idempotent: for declared trusted entries it checks wsfold.yaml and .wsfold/cache.yaml first, then recovers unmounted runtime state before falling back to new local or remote attachment. Use `wsfold summon-all` after a restart or container reset to reconcile every declared trusted attachment and managed worktree.\n\n")
+	b.WriteString("`wsfold summon` is idempotent: for declared trusted entries it checks wsfold.yaml and .wsfold/cache.yaml first, then recovers unmounted runtime state before falling back to new local or remote attachment. Use `wsfold summon-all` after a restart or container reset to reconcile declared trusted attachments, managed worktrees, and missing external cache rows.\n\n")
 	b.WriteString("Picker and status states are `attached` for healthy entries, `unmounted` for recoverable declared entries, and `invalid` when WSFold cannot prove automatic recovery is safe.\n\n")
 	b.WriteString("`wsfold worktree` is trusted-only. It summons the primary repository first, then creates a managed worktree in the active workspace. If a current-workspace managed worktree is shown as unmounted, selecting it repairs that managed worktree. Use --name to override the folder name and --create-branch to create a new branch.\n\n")
 	b.WriteString("`wsfold remove-worktrees` is for external Git worktree cleanup. It shows linked worktree rows known to trusted primary checkouts, hides the primary checkout rows themselves, removes only selected clean branch-backed external worktrees after confirmation, preserves branches and commits, and protects current workspace managed worktrees; use `wsfold dismiss` for those.\n\n")

@@ -231,6 +231,99 @@ func TestManifestCacheContractCacheDeletionRecovery(t *testing.T) {
 	}
 }
 
+func TestManifestCacheContractSummonAllRestoresExternalCacheRows(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h, "WSFOLD_PROJECTS_DIR=.", "WSFOLD_MOUNT_BACKEND=symlink")
+	initWorkspace(t, h)
+
+	externalPath := filepath.Join(h.ExternalRoot, "tool")
+	h.InitRepo(externalPath)
+	h.RunGit(externalPath, "remote", "add", "origin", "https://github.com/github/tool.git")
+
+	manifestPath := filepath.Join(h.Workspace, "wsfold.yaml")
+	manifestBefore := `schema_version: 1
+external:
+    - ref: github/tool
+`
+	if err := os.WriteFile(manifestPath, []byte(manifestBefore), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	cachePath := filepath.Join(h.Workspace, ".wsfold", "cache.yaml")
+	if err := os.Remove(cachePath); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove cache: %v", err)
+	}
+
+	app := testApp(h)
+	var stdout bytes.Buffer
+	app.Stdout = &stdout
+	if err := app.SummonAll(h.Workspace); err != nil {
+		t.Fatalf("SummonAll returned error: %v\nstdout: %s", err, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "External repository cache restored:") || !strings.Contains(stdout.String(), "github/tool") {
+		t.Fatalf("SummonAll should report restored external cache:\n%s", stdout.String())
+	}
+	if got := mustRead(t, manifestPath); got != manifestBefore {
+		t.Fatalf("SummonAll should not rewrite portable external manifest\nwant:\n%s\ngot:\n%s", manifestBefore, got)
+	}
+	cache := mustRead(t, cachePath)
+	for _, snippet := range []string{
+		"ref: github/tool",
+		"checkout_path: " + externalPath,
+	} {
+		if !strings.Contains(cache, snippet) {
+			t.Fatalf("restored cache missing %q:\n%s", snippet, cache)
+		}
+	}
+	workspace := mustRead(t, filepath.Join(h.Workspace, filepath.Base(h.Workspace)+".code-workspace"))
+	relativeExternalPath, err := filepath.Rel(h.Workspace, externalPath)
+	if err != nil {
+		t.Fatalf("compute relative external path: %v", err)
+	}
+	if !strings.Contains(workspace, filepath.ToSlash(relativeExternalPath)) {
+		t.Fatalf("workspace should include restored external root %q:\n%s", filepath.ToSlash(relativeExternalPath), workspace)
+	}
+}
+
+func TestManifestCacheContractSummonAllReportsMissingExternalCacheRows(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h, "WSFOLD_PROJECTS_DIR=.", "WSFOLD_MOUNT_BACKEND=symlink")
+	initWorkspace(t, h)
+
+	if err := os.WriteFile(filepath.Join(h.Workspace, "wsfold.yaml"), []byte(`schema_version: 1
+external:
+    - ref: github/missing
+`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	cachePath := filepath.Join(h.Workspace, ".wsfold", "cache.yaml")
+	if err := os.Remove(cachePath); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove cache: %v", err)
+	}
+
+	app := testApp(h)
+	var stdout bytes.Buffer
+	app.Stdout = &stdout
+	err := app.SummonAll(h.Workspace)
+	if err == nil {
+		t.Fatalf("expected SummonAll to report missing external as invalid\nstdout: %s", stdout.String())
+	}
+	if !strings.Contains(err.Error(), "1 invalid") {
+		t.Fatalf("unexpected SummonAll error: %v", err)
+	}
+	for _, snippet := range []string{
+		"External repository invalid:",
+		"github/missing",
+		"cache missing",
+	} {
+		if !strings.Contains(stdout.String(), snippet) {
+			t.Fatalf("SummonAll output missing %q:\n%s", snippet, stdout.String())
+		}
+	}
+	if _, statErr := os.Stat(cachePath); !os.IsNotExist(statErr) {
+		t.Fatalf("failed external reconciliation should not recreate cache, got %v", statErr)
+	}
+}
+
 func TestManifestCacheContractMissingCacheReportsDiscoveryError(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnv(t, h, "WSFOLD_PROJECTS_DIR=.", "WSFOLD_MOUNT_BACKEND=symlink")

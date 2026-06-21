@@ -178,9 +178,9 @@ into the trusted repository set instead.
 
 The same boundary matters for LLM-driven workflows: external repositories are
 not treated as part of the default trusted workspace context. The bundled
-`wsfold` skill teaches agents how to read `wsfold.yaml`, resolve declared
-external repositories, and inspect them as untrusted sources without running
-code from those repositories.
+`wsfold` skill teaches agents how to read `wsfold.yaml` and `.wsfold/cache.yaml`,
+resolve declared external repositories, and inspect them as untrusted sources
+without running code from those repositories.
 
 ## Workspace State Files
 
