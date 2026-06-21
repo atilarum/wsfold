@@ -147,7 +147,8 @@ unexpected behavior, or unexpected network access.
 1. Ask for confirmation, then run `wsfold summon-external owner/name`.
 2. Inspect as untrusted read-only source. Look for security issues, malware,
    suspicious install scripts, hidden executables, dependency risks, credential
-   handling, telemetry, unexpected network activity, and surprising behavior.
+   handling, token exfiltration to third parties, telemetry, unexpected network
+   activity, and surprising behavior.
 3. Do not run tests or install dependencies from the external repo.
 4. Report whether to keep it external, move it into the trusted set, or avoid it.
 
