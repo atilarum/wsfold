@@ -83,21 +83,29 @@ fails before a WSFold command is needed.
 5. Run `wsfold --help` to verify the CLI and load command help into context.
 
 ## Scenario 2: Set Up WSFold
-Use when configuration is missing or remote trusted discovery is needed.
-1. Configure `WSFOLD_TRUSTED_DIR`, `WSFOLD_EXTERNAL_DIR`, and
-   `WSFOLD_TRUSTED_GITHUB_ORGS` in the shell profile.
-2. `WSFOLD_TRUSTED_DIR` points to repositories the user is comfortable treating
-   as trusted.
-3. `WSFOLD_EXTERNAL_DIR` points to repositories that may be visible but should
-   not be trusted by default.
-4. `WSFOLD_TRUSTED_GITHUB_ORGS` enables trusted on-demand clone/discovery for
-   organization repositories.
-5. For remote discovery/clone, run `gh auth login` if needed, then
-   `wsfold reindex`; for Zsh, add `eval "$(wsfold completion zsh)"`.
+Use after installation, when the user asks to configure WSFold, env vars are
+missing, or access to trusted company repositories needs to be configured.
+1. Explain the difference between trusted and external repos, and why they need
+   separate roots: `WSFOLD_TRUSTED_DIR` is for repos safe to open, edit, and use
+   with agents; `WSFOLD_EXTERNAL_DIR` keeps audit/reference repos visible
+   without treating them as trusted. Then infer/suggest, confirm, and create
+   both roots.
+2. Ask for comma-separated `WSFOLD_TRUSTED_GITHUB_ORGS` so WSFold can find and
+   clone trusted company/org repositories.
+3. Write all three env vars to the shell profile; for Zsh, add missing
+   autocompletion: `eval "$(wsfold completion zsh)"`.
+4. If trusted orgs are configured, ensure `gh` is installed
+   (https://cli.github.com/) and authenticated with `gh auth status` or
+   `gh auth login`.
+5. Source the profile or start a fresh shell, then run `wsfold reindex` to
+   validate env vars and GitHub access.
 
-Example profile lines: `export WSFOLD_TRUSTED_DIR="$HOME/repo/_prj"`,
-`export WSFOLD_EXTERNAL_DIR="$HOME/repo/_ext"`, and
-`export WSFOLD_TRUSTED_GITHUB_ORGS="org_name,org_name2"`.
+Profile snippet:
+```bash
+export WSFOLD_TRUSTED_DIR="$HOME/repo/_prj"
+export WSFOLD_EXTERNAL_DIR="$HOME/repo/_ext"
+export WSFOLD_TRUSTED_GITHUB_ORGS="org_name,org_name2"
+```
 
 ## Scenario 3: Initialize Workspace
 Use when the current task folder is not initialized or commands fail before
