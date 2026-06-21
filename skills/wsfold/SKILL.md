@@ -103,7 +103,7 @@ agent needs another trusted repo as task context.
 1. Run `wsfold summon owner/name` or `wsfold summon local-folder` with an
    explicit trusted ref.
 2. Use the summoned primary checkout as context; if edits are needed, create or
-   recover a managed worktree in Scenario 9.
+   recover a managed worktree in Scenario 10.
 
 ## Scenario 5: Post-Discovery Local Analysis
 Use when MCP, search, GitHub, CLI tooling, or user input gives a repo lead.
@@ -140,37 +140,8 @@ Use when external or untrusted code is useful as read-only context.
 5. If the repo becomes trusted enough for normal work, ask whether it should be
    moved into the trusted repository set.
 
-## Scenario 8: Reconcile Or Recover State
-Use when declared entries are missing, usually after a fresh checkout, machine
-change, restart, reset, or lost mount.
-1. Start with `wsfold status`.
-2. If one entry is `unmounted`, run `wsfold summon <repo-ref>`.
-3. If several trusted attachments or managed worktrees are unmounted, run
-   `wsfold summon-all`.
-4. If an entry is `invalid`, inspect manually, preserve user data, and do not
-   force cleanup or overwrite paths.
-5. `summon-all` can rebuild cache entries after safe local resolution.
 
-## Scenario 9: Create Or Recover Managed Worktree
-Use when implementation work is needed.
-1. Use `wsfold worktree owner/name feature-branch` for an existing branch.
-2. Use `wsfold worktree --create-branch owner/name agent/feature` for a new
-   branch.
-3. Use `--name <folder>` when the default folder would collide or be unclear.
-4. Edit inside the managed worktree, not inside transient discovery context.
-
-## Scenario 10: Dismiss Repository Or Worktree
-Use when attached context is no longer needed.
-1. Dismiss an attachment with `wsfold dismiss owner/name`.
-2. Dismiss a managed worktree with `wsfold dismiss owner/name/branch`.
-3. Run from the workspace root for bind-backed attachments.
-4. Dismissing a managed worktree removes its directory and manifest/cache
-   entries but preserves branch history and commits.
-5. If unmount reports a busy target, leave the mounted folder, close processes
-   using it, and retry. Do not force-unmount unless explicitly asked.
-
-
-## Scenario 11: External Security Or Dependency Audit
+## Scenario 8: External Security Or Dependency Audit
 Use when the user asks for security/dependency review, or the agent must decide
 whether outside code is safe to trust or use deeply: after confirmation, attach
 an external repository, inspect the actual code, and look for vulnerabilities,
@@ -181,6 +152,37 @@ unexpected behavior, or unexpected network access.
    handling, telemetry, unexpected network activity, and surprising behavior.
 3. Do not run tests or install dependencies from the external repo.
 4. Report whether to keep it external, move it into the trusted set, or avoid it.
+
+
+## Scenario 9: Reconcile Or Recover State
+Use when declared entries are missing, usually after a fresh checkout, machine
+change, restart, reset, or lost mount.
+1. Start with `wsfold status`.
+2. If one entry is `unmounted`, run `wsfold summon <repo-ref>`.
+3. If several trusted attachments or managed worktrees are unmounted, run
+   `wsfold summon-all`.
+4. If an entry is `invalid`, inspect manually, preserve user data, and do not
+   force cleanup or overwrite paths.
+5. `summon-all` can rebuild cache entries after safe local resolution.
+
+## Scenario 10: Create Or Recover Managed Worktree
+Use when implementation work is needed.
+1. Use `wsfold worktree owner/name feature-branch` for an existing branch.
+2. Use `wsfold worktree --create-branch owner/name agent/feature` for a new
+   branch.
+3. Use `--name <folder>` when the default folder would collide or be unclear.
+4. Edit inside the managed worktree, not inside transient discovery context.
+
+## Scenario 11: Dismiss Repository Or Worktree
+Use when attached context is no longer needed.
+1. Dismiss an attachment with `wsfold dismiss owner/name`.
+2. Dismiss a managed worktree with `wsfold dismiss owner/name/branch`.
+3. Run from the workspace root for bind-backed attachments.
+4. Dismissing a managed worktree removes its directory and manifest/cache
+   entries but preserves branch history and commits.
+5. If unmount reports a busy target, leave the mounted folder, close processes
+   using it, and retry. Do not force-unmount unless explicitly asked.
+
 
 ## External Git Worktree Cleanup
 Do not run `wsfold remove-worktrees` autonomously. It is a user-facing cleanup
