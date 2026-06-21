@@ -1,6 +1,20 @@
 ---
 name: wsfold
-description: Use WSFold to find the repository needed for a task, summon a trusted repository into the current workspace, add or inspect an external repository after confirmation, resolve external repositories declared in `wsfold.yaml`, treat external repositories as untrusted read-only sources, create a managed worktree for edits, check status, recover after restart, and dismiss repositories or worktrees when finished. Also use when the user asks to use WSFold but `wsfold` is not available in PATH, so the agent can follow the README installation procedure first. Use when an agent needs WSFold command semantics for repo discovery, summon, summon-external, external workspace analysis, worktree, installation fallback, or cleanup.
+description: >-
+  Use this skill for WSFold install, setup, or init, or when
+  `wsfold` is missing, env vars are missing, or commands fail before init. Use
+  it for trusted-repo summon: user asks to summon, attach, or inspect a trusted repo,
+  or the agent needs another repo for context. Also when a repo lead comes from
+  MCP/search/GitHub/CLI/user input and should be summoned locally to verify
+  relevance and study how it works instead of the narrow
+  interface, or when org repos such as backends, services, SDKs, or docs are
+  needed for related implementation. Use it for external/untrusted flows:
+  inspect/audit outside code or decide whether it is safe to trust or use deeply
+  by checking for security issues, malware, unexpected behavior, dependency, or network risk.
+  Use it when `wsfold status` shows declared attachments/worktrees
+  missing/unmounted and the workspace needs restore. Use it as a trusted-repo
+  worktree manager when code changes need a managed worktree; create/recover
+  managed worktrees and dismiss repos/worktrees when done.
 metadata:
   version: "1.0"
 ---
