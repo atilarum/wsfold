@@ -164,7 +164,9 @@ change, restart, reset, or lost mount.
 5. `summon-all` can rebuild cache entries after safe local resolution.
 
 ## Scenario 10: Create Or Recover Managed Worktree
-Use when implementation work is needed.
+Use when implementation work or code changes are needed; this is the preferred
+editing path unless the user explicitly asks for direct edits inside a
+repository.
 1. Use `wsfold worktree owner/name feature-branch` for an existing branch.
 2. Use `wsfold worktree --create-branch owner/name agent/feature` for a new
    branch.
@@ -180,7 +182,6 @@ Use when attached context is no longer needed.
    entries but preserves branch history and commits.
 5. If unmount reports a busy target, leave the mounted folder, close processes
    using it, and retry. Do not force-unmount unless explicitly asked.
-
 
 ## External Git Worktree Cleanup
 Do not run `wsfold remove-worktrees` autonomously. It is a user-facing cleanup
