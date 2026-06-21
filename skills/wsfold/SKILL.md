@@ -26,6 +26,11 @@ repositories. Use it to attach only the repositories needed for a task, inspect
 them locally, create managed worktrees for code changes, and dismiss context
 when it is no longer useful.
 
+`wsfold.yaml` is the version-controlled workspace manifest; `.wsfold/cache.yaml`
+is uncommitted machine-local realization state, and `wsfold summon-all` restores
+the workspace from the manifest like a dependency manager.
+
+
 ## Agents Can Use WSFold Directly
 
 That model is useful for humans through an interactive CLI, but it becomes
@@ -47,13 +52,13 @@ For example:
 
 ## Trusted And External Repositories
 
-WSFold has two repository classes. Trusted repositories come from
+WSFold has two repository classes. Trusted repositories come from env vars
 `WSFOLD_TRUSTED_DIR` or `WSFOLD_TRUSTED_GITHUB_ORGS`; `wsfold summon` attaches
 them with native bind, FUSE bind, or symlink. WSFold records original trusted
 checkout paths as Codex writable roots and Claude Code additional directories,
 so agents can read and write them without permission escalation.
 
-External repositories come from `WSFOLD_EXTERNAL_DIR`, are declared in
+External repositories come from env var `WSFOLD_EXTERNAL_DIR`, are declared in
 `wsfold.yaml` under `external`, and stay outside trusted workspace context.
 Use `wsfold.yaml` as the external ref list, and `.wsfold/cache.yaml` for actual
 external `checkout_path` values. If a cache row is missing, run
