@@ -108,13 +108,9 @@ export WSFOLD_TRUSTED_GITHUB_ORGS="org_name,org_name2"
 ```
 
 ## Scenario 3: Initialize Workspace
-Use when the current task folder is not initialized or commands fail before
-workspace init.
-1. Run `wsfold init` from the directory where WSFold should manage the task.
-2. Expect `wsfold.yaml`, `.wsfold/cache.yaml` ignore rules, a `.code-workspace`,
-   `.agents/skills`, and `.claude/skills`.
-3. Use `wsfold init --refresh-skills` when local skills are stale.
-4. After init, WSFold commands may run from the root or subfolders.
+Use when the workspace is not initialized or WSFold reports an init error: pick
+the workspace root where attachments and worktrees should appear, then run
+`wsfold init` there.
 
 ## Scenario 4: Summon Trusted Repository
 Use when a known trusted repo is needed for the task.
