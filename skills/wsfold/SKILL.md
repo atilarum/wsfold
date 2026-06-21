@@ -30,6 +30,10 @@ when it is no longer useful.
 is uncommitted machine-local realization state, and `wsfold summon-all` restores
 the workspace from the manifest like a dependency manager.
 
+WSFold has interactive pickers for humans, but agents should use non-interactive
+CLI calls with explicit refs. Do not open pickers during agent work; when repo
+candidate discovery is needed, inspect programmable completions with
+`wsfold __complete <command> <prefix>` and then run the explicit command.
 
 ## Agents Can Use WSFold Directly
 
@@ -114,7 +118,7 @@ the workspace root where attachments and worktrees should appear, then run
 
 ## Scenario 4: Summon Trusted Repository
 Use when a known trusted repo is needed for the task.
-1. Run `wsfold summon owner/name`, or `wsfold summon` for the picker.
+1. Run `wsfold summon owner/name`.
 2. Trusted refs may be local folder names or GitHub `owner/name` refs from
    trusted organizations.
 3. Inspect locally with `rg`, `rg --files`, `sed`, language tools, and tests.
