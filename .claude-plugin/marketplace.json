@@ -3,13 +3,13 @@
   "owner": {
     "name": "Atilarum"
   },
-  "description": "WSFold agent workflow plugin.",
+  "description": "WSFold Plugin Marketplace",
   "plugins": [
     {
       "name": "wsfold",
       "source": "./plugins/wsfold",
-      "description": "Task-shaped multi-repo workspaces for agents.",
-      "version": "1.0.0",
+      "description": "Task-shaped multi-repo workspace manager for agents.",
+      "version": "1.0",
       "author": {
         "name": "Atilarum"
       },
@@ -23,7 +23,7 @@
         "worktree",
         "repository-context"
       ],
-      "category": "Productivity"
+      "category": "Development"
     }
   ]
 }

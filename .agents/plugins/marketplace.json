@@ -1,7 +1,7 @@
 {
   "name": "wsfold",
   "interface": {
-    "displayName": "WSFold"
+    "displayName": "WSFold Plugin Marketplace"
   },
   "plugins": [
     {
@@ -11,10 +11,9 @@
         "path": "./plugins/wsfold"
       },
       "policy": {
-        "installation": "AVAILABLE",
-        "authentication": "ON_INSTALL"
+        "installation": "AVAILABLE"
       },
-      "category": "Productivity"
+      "category": "Development"
     }
   ]
 }
