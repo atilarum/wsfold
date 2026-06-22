@@ -43,6 +43,8 @@ For example:
 The `wsfold` skill can also be installed globally by installing this repository
 as a plugin marketplace. See [Agent Skill](docs/agent-skill.md) for details.
 
+<img src="docs/assets/wsfold-plugin-codex-marketplace.jpg" alt="WSFold Codex plugin marketplace preview">
+
 ## Installation
 
 `wsfold` ships prebuilt binaries for macOS and Linux on `x86_64` and `ARM64`.

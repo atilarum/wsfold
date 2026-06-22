@@ -61,6 +61,8 @@ codex plugin marketplace add atilarum/wsfold --sparse .agents --sparse plugins
 codex plugin add wsfold@wsfold
 ```
 
+<img src="assets/wsfold-plugin-codex-marketplace.jpg" alt="WSFold Codex plugin marketplace preview">
+
 To inspect or refresh the configured marketplace later:
 
 ```bash
