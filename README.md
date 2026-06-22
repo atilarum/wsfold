@@ -63,8 +63,7 @@ There are three ways to install WSFold:
 If Homebrew is not installed yet, see the official instructions at [brew.sh](https://brew.sh/).
 
 ```bash
-brew tap atilarum/wsfold
-brew install wsfold
+brew install atilarum/wsfold/wsfold
 ```
 
 To update later:

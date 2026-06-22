@@ -62,8 +62,7 @@ fails before a WSFold command is needed.
 3. If Homebrew is missing, tell the user Homebrew is the preferred installation
    path, ask permission, then install it by following the official instructions
    at https://brew.sh/.
-4. Install WSFold with `brew tap atilarum/wsfold` then `brew install wsfold`.
-   If Homebrew cannot be used, read
+4. Install WSFold with `brew install atilarum/wsfold/wsfold`. If Homebrew cannot be used, read
    https://github.com/atilarum/wsfold#installation and follow the GitHub
    Releases fallback.
 5. Run `wsfold --help` to verify the CLI and load command help into context.
