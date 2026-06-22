@@ -44,7 +44,7 @@ The `wsfold` skill can also be installed globally by installing this repository
 as a plugin marketplace. See [Agent Skill](docs/agent-skill.md) for details.
 
 <p align="center">
-  <img src="docs/assets/wsfold-plugin-codex-marketplace.png" alt="WSFold Codex plugin marketplace preview" width="758">
+  <img src="docs/assets/wsfold-plugin-codex-marketplace.jpg" alt="WSFold Codex plugin marketplace preview" width="758">
 </p>
 
 ## Installation
