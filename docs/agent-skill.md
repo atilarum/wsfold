@@ -96,6 +96,26 @@ You can also run the same flow from inside Claude Code:
 /reload-plugins
 ```
 
+### Claude Cowork
+
+Cowork installs plugins through its UI rather than a CLI, but it reads the same
+git-repository marketplace format as Claude Code, so the manifests already in
+this repository work without changes.
+
+1. Open the **Cowork** tab, then open **Customize** and select **Plugins**.
+2. In the **Personal plugins** section, click the **+** button and choose
+   **Add marketplace → Add from a repository**.
+3. Enter the repository `atilarum/wsfold`.
+4. Once the marketplace is added, find the **wsfold** plugin and click
+   **Install**.
+
+<p align="center">
+  <img src="assets/claude-cowork-add-marketplace.png" alt="WSFold Claude Cowork add marketplace preview" width="758">
+</p>
+
+To pull newer plugin versions later, use the **Update** button on the WSFold
+marketplace entry.
+
 ### Cursor
 
 This repository includes Cursor plugin metadata under `.cursor-plugin/`.
