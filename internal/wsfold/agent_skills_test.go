@@ -35,19 +35,18 @@ func TestAgentSkillDistributionPluginManifests(t *testing.T) {
 		if !strings.Contains(stringField(manifest, "description"), "WSFold") {
 			t.Fatalf("%s description should name WSFold: %#v", path, manifest["description"])
 		}
-		iface, ok := manifest["interface"].(map[string]any)
-		if !ok {
-			t.Fatalf("%s missing interface object: %#v", path, manifest)
-		}
-		for _, field := range []string{"displayName", "shortDescription", "longDescription", "developerName", "category"} {
-			if strings.TrimSpace(stringField(iface, field)) == "" {
-				t.Fatalf("%s interface.%s must be present: %#v", path, field, iface)
-			}
-		}
 	}
 
 	codex := readJSONMap(t, filepath.Join(root, "plugins", "wsfold", ".codex-plugin", "plugin.json"))
-	codexInterface := codex["interface"].(map[string]any)
+	codexInterface, ok := codex["interface"].(map[string]any)
+	if !ok {
+		t.Fatalf("Codex plugin manifest missing interface object: %#v", codex)
+	}
+	for _, field := range []string{"displayName", "shortDescription", "longDescription", "developerName", "category"} {
+		if strings.TrimSpace(stringField(codexInterface, field)) == "" {
+			t.Fatalf("Codex plugin manifest interface.%s must be present: %#v", field, codexInterface)
+		}
+	}
 	if got := stringField(codexInterface, "composerIcon"); got != "./icons/composer-icon.png" {
 		t.Fatalf("Codex composerIcon = %q, want WSFold icon", got)
 	}
@@ -71,6 +70,8 @@ func TestAgentSkillDistributionPluginManifests(t *testing.T) {
 	assertCodexMarketplaceSource(t, filepath.Join(root, ".agents", "plugins", "marketplace.json"), "./plugins/wsfold")
 	assertStringMarketplaceSource(t, filepath.Join(root, ".claude-plugin", "marketplace.json"), "./plugins/wsfold")
 	assertStringMarketplaceSource(t, filepath.Join(root, ".cursor-plugin", "marketplace.json"), "./plugins/wsfold")
+	assertMarketplacePluginDescription(t, filepath.Join(root, ".claude-plugin", "marketplace.json"))
+	assertMarketplacePluginDescription(t, filepath.Join(root, ".cursor-plugin", "marketplace.json"))
 	assertSharedSkillDirs(t, root)
 }
 
@@ -409,6 +410,14 @@ func assertStringMarketplaceSource(t *testing.T, path string, want string) {
 	plugin := firstMarketplacePlugin(t, path)
 	if got := stringField(plugin, "source"); got != want {
 		t.Fatalf("%s source = %q, want %q", path, got, want)
+	}
+}
+
+func assertMarketplacePluginDescription(t *testing.T, path string) {
+	t.Helper()
+	plugin := firstMarketplacePlugin(t, path)
+	if !strings.Contains(stringField(plugin, "description"), "WSFold") {
+		t.Fatalf("%s plugin description should name WSFold: %#v", path, plugin["description"])
 	}
 }
 
