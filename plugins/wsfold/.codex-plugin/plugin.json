@@ -1,0 +1,40 @@
+{
+  "name": "wsfold",
+  "version": "1.0.0",
+  "description": "WSFold task-shaped multi-repo workspace manager for agents.",
+  "author": {
+    "name": "Atilarum",
+    "url": "https://github.com/atilarum"
+  },
+  "homepage": "https://github.com/atilarum/wsfold",
+  "repository": "https://github.com/atilarum/wsfold",
+  "license": "MIT",
+  "keywords": [
+    "agents",
+    "workspace",
+    "multi-repo",
+    "worktree",
+    "repository-context"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "WSFold",
+    "shortDescription": "Task-shaped multi-repo workspace manager for agents.",
+    "longDescription": "WSFold helps humans and agents compose exactly the repositories needed for a task, summon trusted or external repositories, create managed worktrees, and clean up with dismiss.",
+    "developerName": "Atilarum",
+    "category": "Development",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/atilarum/wsfold",
+    "defaultPrompt": [
+      "Install, configure, and initialize WSFold in this workspace.",
+      "Summon the trusted repository needed for this task and inspect it locally.",
+      "Attach an external repository for a read-only security review."
+    ],
+    "brandColor": "#0E7490",
+    "composerIcon": "./icons/composer-icon.png",
+    "logo": "./icons/logo.png"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "wsfold",
+  "displayName": "WSFold",
+  "description": "WSFold Plugin Marketplace",
+  "plugins": [
+    {
+      "name": "wsfold",
+      "source": "./plugins/wsfold",
+      "description": "WSFold task-shaped multi-repo workspace manager for agents."
+    }
+  ]
+}

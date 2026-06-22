@@ -1,0 +1,19 @@
+{
+  "name": "wsfold",
+  "interface": {
+    "displayName": "WSFold Plugin Marketplace"
+  },
+  "plugins": [
+    {
+      "name": "wsfold",
+      "source": {
+        "source": "local",
+        "path": "./plugins/wsfold"
+      },
+      "policy": {
+        "installation": "AVAILABLE"
+      },
+      "category": "Development"
+    }
+  ]
+}

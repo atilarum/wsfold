@@ -639,6 +639,46 @@ func TestSummonAllRecoversIndependentEntriesAndReportsInvalid(t *testing.T) {
 	}
 }
 
+func TestSummonAllDoesNotRestoreExternalCacheFromTrustedCheckout(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	trustedRepo := filepath.Join(h.TrustedRoot, "tool")
+	h.InitRepo(trustedRepo)
+	h.RunGit(trustedRepo, "remote", "add", "origin", "https://github.com/github/tool.git")
+
+	manifestText := `schema_version: 1
+external:
+    - ref: github/tool
+`
+	if err := os.WriteFile(manifestPath(h.Workspace), []byte(manifestText), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	err := app.SummonAll(h.Workspace)
+	if err == nil || !strings.Contains(err.Error(), "invalid") {
+		t.Fatalf("expected external entry to remain invalid, got %v", err)
+	}
+
+	if cacheBytes, err := os.ReadFile(cachePath(h.Workspace)); err == nil {
+		if strings.Contains(string(cacheBytes), trustedRepo) || strings.Contains(string(cacheBytes), "github/tool") {
+			t.Fatalf("trusted checkout should not be cached as external:\n%s", string(cacheBytes))
+		}
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("read cache: %v", err)
+	}
+	workspaceBytes, err := os.ReadFile(workspacePath(h.Workspace))
+	if err != nil {
+		t.Fatalf("read workspace: %v", err)
+	}
+	if strings.Contains(string(workspaceBytes), trustedRepo) {
+		t.Fatalf("workspace should not include trusted checkout as external root:\n%s", string(workspaceBytes))
+	}
+}
+
 func TestSummonRejectsUnsupportedMountBackend(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnv(t, h)

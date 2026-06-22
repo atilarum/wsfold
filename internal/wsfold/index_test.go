@@ -110,6 +110,30 @@ func TestResolvePrefersRequestedTrustClassAndErrorsOnAmbiguity(t *testing.T) {
 	}
 }
 
+func TestResolveDoesNotFallBackAcrossTrustClasses(t *testing.T) {
+	t.Parallel()
+
+	index := RepoIndex{
+		Repos: []Repo{
+			{Name: "tool", LocalName: "tool", Slug: "github/tool", CheckoutPath: "/trusted/tool", TrustClass: TrustClassTrusted},
+			{Name: "audit", LocalName: "audit", Slug: "github/audit", CheckoutPath: "/external/audit", TrustClass: TrustClassExternal},
+		},
+	}
+
+	if _, err := index.Resolve("github/tool", TrustClassExternal); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected external slug lookup to ignore trusted match, got %v", err)
+	}
+	if _, err := index.Resolve("tool", TrustClassExternal); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected external local-name lookup to ignore trusted match, got %v", err)
+	}
+	if _, err := index.Resolve("github/audit", TrustClassTrusted); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected trusted slug lookup to ignore external match, got %v", err)
+	}
+	if _, err := index.Resolve("audit", TrustClassTrusted); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected trusted local-name lookup to ignore external match, got %v", err)
+	}
+}
+
 func TestResolveSupportsLocalFolderAlias(t *testing.T) {
 	t.Parallel()
 

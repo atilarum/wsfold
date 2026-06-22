@@ -51,10 +51,11 @@ func Run(args []string, stdout, stderr io.Writer) error {
 	app.Stderr = stderr
 
 	if args[0] == "init" {
-		if len(args) != 1 {
-			return fmt.Errorf("init does not accept positional arguments")
+		opts, err := parseInitArgs(args)
+		if err != nil {
+			return err
 		}
-		return app.Init(cwd)
+		return app.InitWithOptions(cwd, opts)
 	}
 
 	if args[0] == "reindex" {
@@ -272,6 +273,23 @@ func columnWidths(rows [][]string) []int {
 type worktreeCLIOptions struct {
 	Name         string
 	CreateBranch bool
+}
+
+func parseInitArgs(args []string) (wsfold.InitOptions, error) {
+	flags := flag.NewFlagSet("init", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	noSkills := flags.Bool("no-skills", false, "skip local WSFold skill installation")
+	refreshSkills := flags.Bool("refresh-skills", false, "replace the bundled local WSFold skill")
+	if err := flags.Parse(args[1:]); err != nil {
+		return wsfold.InitOptions{}, err
+	}
+	if flags.NArg() != 0 {
+		return wsfold.InitOptions{}, fmt.Errorf("init does not accept positional arguments")
+	}
+	if *noSkills && *refreshSkills {
+		return wsfold.InitOptions{}, fmt.Errorf("--no-skills and --refresh-skills cannot be used together")
+	}
+	return wsfold.InitOptions{NoSkills: *noSkills, RefreshSkills: *refreshSkills}, nil
 }
 
 func resolveCommandRefs(app *wsfold.App, cwd string, command string, args []string, stdout io.Writer, stderr io.Writer) ([]string, error) {

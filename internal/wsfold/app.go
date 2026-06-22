@@ -75,7 +75,7 @@ func (a *App) SummonAll(cwd string) error {
 	if err != nil {
 		return err
 	}
-	if len(manifest.Trusted) == 0 && len(manifest.ManagedWorktrees) == 0 {
+	if len(manifest.Trusted) == 0 && len(manifest.External) == 0 && len(manifest.ManagedWorktrees) == 0 {
 		if err := a.reconcileTrustedAgentAccess(primaryRoot, nil); err != nil {
 			return err
 		}
@@ -114,6 +114,23 @@ func (a *App) SummonAll(cwd string) error {
 	}
 	for _, entry := range manifest.ManagedWorktrees {
 		status, err := a.reconcileManagedWorktree(primaryRoot, cfg, manifest, entry)
+		switch {
+		case err != nil:
+			failed++
+			_, _ = fmt.Fprintf(a.Stdout, "%s failed: %s: %v\n", ansiRedBold+"✗"+ansiReset, entry.RepoRef, err)
+		case status == RealizationAttached:
+			attached++
+		case status == RealizationUnmounted:
+			recovered++
+		case status == RealizationInvalid:
+			invalid++
+		}
+		if current, loadErr := loadManifest(primaryRoot); loadErr == nil {
+			manifest = current
+		}
+	}
+	for _, entry := range manifest.External {
+		status, err := a.reconcileExternalEntry(primaryRoot, cfg, manifest, entry)
 		switch {
 		case err != nil:
 			failed++
@@ -190,42 +207,7 @@ func (a *App) ReindexTrusted() error {
 }
 
 func (a *App) Init(cwd string) error {
-	primaryRoot, err := currentWorkspaceRoot(cwd)
-	if err != nil {
-		return err
-	}
-	if _, err := os.Stat(manifestPath(primaryRoot)); err == nil {
-		_, _ = fmt.Fprintf(a.Stdout, "already initialized %s\n", primaryRoot)
-		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("inspect manifest: %w", err)
-	}
-
-	cfg, err := LoadConfig()
-	if err != nil {
-		return err
-	}
-
-	manifest := Manifest{
-		Version:          manifestVersion,
-		PrimaryRoot:      primaryRoot,
-		Trusted:          []Entry{},
-		External:         []Entry{},
-		ManagedWorktrees: []ManagedWorktreeEntry{},
-	}
-
-	if err := saveManifest(primaryRoot, manifest); err != nil {
-		return err
-	}
-	if err := ensureCacheIgnored(primaryRoot); err != nil {
-		return err
-	}
-	if err := writeWorkspace(primaryRoot, Manifest{}, manifest, cfg.ProjectsDirName); err != nil {
-		return err
-	}
-
-	_, _ = fmt.Fprintf(a.Stdout, "initialized %s\n", primaryRoot)
-	return nil
+	return a.InitWithOptions(cwd, InitOptions{})
 }
 
 func ensureCacheIgnored(primaryRoot string) error {
@@ -622,6 +604,71 @@ func (a *App) persistTrustedCacheResolution(primaryRoot string, manifest Manifes
 		return err
 	}
 	return nil
+}
+
+func (a *App) reconcileExternalEntry(primaryRoot string, cfg Config, manifest Manifest, entry Entry) (RealizationStatus, error) {
+	row := statusExternalRow(entry, a.Runner)
+	switch row.State {
+	case RealizationAttached:
+		if entry.CacheInferred {
+			if err := a.persistExternalCacheResolution(primaryRoot, cfg, manifest, entry); err != nil {
+				return RealizationUnmounted, err
+			}
+			_, _ = fmt.Fprintf(a.Stdout, "%s External repository cache restored: %s\n", ansiGreenBold+"✓"+ansiReset, ansiCyanBold+entry.RepoRef+ansiReset)
+			return RealizationUnmounted, nil
+		}
+		_, _ = fmt.Fprintf(a.Stdout, "%s External repository available: %s\n", ansiGreenBold+"✓"+ansiReset, ansiCyanBold+entry.RepoRef+ansiReset)
+		return RealizationAttached, nil
+	case RealizationInvalid:
+		_, _ = fmt.Fprintf(a.Stdout, "%s External repository invalid: %s (%s)\n", ansiRedBold+"✗"+ansiReset, ansiCyanBold+entry.RepoRef+ansiReset, row.Detail)
+		return RealizationInvalid, nil
+	default:
+		return RealizationInvalid, fmt.Errorf("unknown realization status %q for %s", row.State, entry.RepoRef)
+	}
+}
+
+func (a *App) persistExternalCacheResolution(primaryRoot string, cfg Config, manifest Manifest, entry Entry) error {
+	previous := cloneManifest(manifest)
+	if !pathInsideRoot(cfg.ExternalDir, entry.CheckoutPath) {
+		return fmt.Errorf("inferred external checkout path %s must be inside %s", entry.CheckoutPath, cfg.ExternalDir)
+	}
+	entry.CacheInferred = false
+	entry.ResolutionDetail = ""
+	cache, err := loadWorkspaceCache(primaryRoot)
+	if err != nil {
+		return err
+	}
+	cache.External = upsertExternalCacheEntry(cache.External, ExternalCacheEntry{
+		Ref:          strings.TrimSpace(entry.RepoRef),
+		CheckoutPath: filepath.Clean(entry.CheckoutPath),
+	})
+	if err := saveWorkspaceCache(primaryRoot, cache); err != nil {
+		return err
+	}
+	manifest.Upsert(entry)
+	if err := writeWorkspace(primaryRoot, previous, manifest, cfg.ProjectsDirName); err != nil {
+		return err
+	}
+	return nil
+}
+
+func upsertExternalCacheEntry(entries []ExternalCacheEntry, entry ExternalCacheEntry) []ExternalCacheEntry {
+	ref := normalizeRepoRef(entry.Ref)
+	for i := range entries {
+		if normalizeRepoRef(entries[i].Ref) == ref {
+			entries[i] = entry
+			return entries
+		}
+	}
+	return append(entries, entry)
+}
+
+func pathInsideRoot(root string, path string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel))
 }
 
 func (a *App) recoverTrustedEntry(primaryRoot string, cfg Config, manifest Manifest, entry Entry) error {

@@ -1,0 +1,29 @@
+{
+  "name": "wsfold",
+  "owner": {
+    "name": "Atilarum"
+  },
+  "description": "WSFold Plugin Marketplace",
+  "plugins": [
+    {
+      "name": "wsfold",
+      "source": "./plugins/wsfold",
+      "description": "WSFold task-shaped multi-repo workspace manager for agents.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Atilarum"
+      },
+      "homepage": "https://github.com/atilarum/wsfold",
+      "repository": "https://github.com/atilarum/wsfold",
+      "license": "MIT",
+      "keywords": [
+        "agents",
+        "workspace",
+        "multi-repo",
+        "worktree",
+        "repository-context"
+      ],
+      "category": "Development"
+    }
+  ]
+}

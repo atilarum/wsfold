@@ -182,7 +182,7 @@ func (idx RepoIndex) resolvePrimarySlug(ref string, requested TrustClass) (Repo,
 
 	preferred := filterByTrust(slugMatches, requested)
 	if len(preferred) == 0 {
-		preferred = slugMatches
+		return Repo{}, false, nil
 	}
 
 	primary := primaryRepos(preferred)
@@ -206,10 +206,7 @@ func (idx RepoIndex) byLocalName(name string, requested TrustClass) []Repo {
 	}
 
 	preferred := filterByTrust(matches, requested)
-	if len(preferred) > 0 {
-		return preferred
-	}
-	return matches
+	return preferred
 }
 
 func (idx RepoIndex) byPrimaryShortName(name string, requested TrustClass) []Repo {
@@ -225,10 +222,7 @@ func (idx RepoIndex) byPrimaryShortName(name string, requested TrustClass) []Rep
 	}
 
 	preferred := filterByTrust(matches, requested)
-	if len(preferred) > 0 {
-		return preferred
-	}
-	return matches
+	return preferred
 }
 
 func (idx RepoIndex) byWorktreeSlugAndBranch(slug string, branch string, requested TrustClass) []Repo {
@@ -243,10 +237,7 @@ func (idx RepoIndex) byWorktreeSlugAndBranch(slug string, branch string, request
 	}
 
 	preferred := filterByTrust(matches, requested)
-	if len(preferred) > 0 {
-		return preferred
-	}
-	return matches
+	return preferred
 }
 
 func primaryRepos(repos []Repo) []Repo {
