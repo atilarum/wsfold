@@ -17,6 +17,7 @@ description: >-
   managed worktrees and dismiss repos/worktrees when done.
 metadata:
   version: "1.0.0"
+  short-description: Summon and dismiss repositories and worktrees
 ---
 
 # WSFold
