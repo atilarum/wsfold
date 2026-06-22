@@ -629,6 +629,9 @@ func (a *App) reconcileExternalEntry(primaryRoot string, cfg Config, manifest Ma
 
 func (a *App) persistExternalCacheResolution(primaryRoot string, cfg Config, manifest Manifest, entry Entry) error {
 	previous := cloneManifest(manifest)
+	if !pathInsideRoot(cfg.ExternalDir, entry.CheckoutPath) {
+		return fmt.Errorf("inferred external checkout path %s must be inside %s", entry.CheckoutPath, cfg.ExternalDir)
+	}
 	entry.CacheInferred = false
 	entry.ResolutionDetail = ""
 	cache, err := loadWorkspaceCache(primaryRoot)
@@ -658,6 +661,14 @@ func upsertExternalCacheEntry(entries []ExternalCacheEntry, entry ExternalCacheE
 		}
 	}
 	return append(entries, entry)
+}
+
+func pathInsideRoot(root string, path string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel))
 }
 
 func (a *App) recoverTrustedEntry(primaryRoot string, cfg Config, manifest Manifest, entry Entry) error {

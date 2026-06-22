@@ -189,7 +189,7 @@ command for removing selected clean external Git worktrees outside the current
 workspace lifecycle.
 
 ## CLI Usage
-Prefer local help when details are missing: `wsfold --help` and `wsfold <command> --help`.
+Prefer local help when details are missing: `wsfold --help`.
 - `wsfold init`: initialize the current folder as a workspace root. It creates
   `wsfold.yaml`, ignores `.wsfold/cache.yaml`, creates `.code-workspace`,
   installs local skills, and then allows commands from any workspace subfolder.
