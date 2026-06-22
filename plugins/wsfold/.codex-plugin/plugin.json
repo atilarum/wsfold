@@ -1,6 +1,6 @@
 {
   "name": "wsfold",
-  "version": "1.0",
+  "version": "1.0.0",
   "description": "Task-shaped multi-repo workspace manager for agents.",
   "author": {
     "name": "Atilarum",

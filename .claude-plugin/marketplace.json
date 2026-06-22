@@ -9,7 +9,7 @@
       "name": "wsfold",
       "source": "./plugins/wsfold",
       "description": "Task-shaped multi-repo workspace manager for agents.",
-      "version": "1.0",
+      "version": "1.0.0",
       "author": {
         "name": "Atilarum"
       },

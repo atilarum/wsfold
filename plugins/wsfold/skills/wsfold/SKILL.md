@@ -16,7 +16,7 @@ description: >-
   worktree manager when code changes need a managed worktree; create/recover
   managed worktrees and dismiss repos/worktrees when done.
 metadata:
-  version: "1.0"
+  version: "1.0.0"
 ---
 
 # WSFold
