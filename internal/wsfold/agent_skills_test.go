@@ -20,6 +20,13 @@ var expectedAgentSkillNames = []string{"wsfold"}
 
 func TestAgentSkillDistributionPluginManifests(t *testing.T) {
 	root := repoRootForTest(t)
+	const (
+		description = "WSFold task-shaped multi-repo workspace manager for agents."
+		pluginRoot  = "./plugins/wsfold"
+		skillsPath  = "./skills/"
+		version     = "1.0.0"
+	)
+
 	for _, path := range []string{
 		filepath.Join(root, "plugins", "wsfold", ".codex-plugin", "plugin.json"),
 		filepath.Join(root, "plugins", "wsfold", ".claude-plugin", "plugin.json"),
@@ -29,11 +36,14 @@ func TestAgentSkillDistributionPluginManifests(t *testing.T) {
 		if got := stringField(manifest, "name"); got != "wsfold" {
 			t.Fatalf("%s name = %q, want wsfold", path, got)
 		}
-		if got := stringField(manifest, "skills"); got != "./skills/" {
-			t.Fatalf("%s skills = %q, want ./skills/", path, got)
+		if got := stringField(manifest, "version"); got != version {
+			t.Fatalf("%s version = %q, want %s", path, got, version)
 		}
-		if !strings.Contains(stringField(manifest, "description"), "WSFold") {
-			t.Fatalf("%s description should name WSFold: %#v", path, manifest["description"])
+		if got := stringField(manifest, "description"); got != description {
+			t.Fatalf("%s description = %q, want %q", path, got, description)
+		}
+		if got := stringField(manifest, "skills"); got != skillsPath {
+			t.Fatalf("%s skills = %q, want %s", path, got, skillsPath)
 		}
 	}
 
@@ -54,7 +64,16 @@ func TestAgentSkillDistributionPluginManifests(t *testing.T) {
 		t.Fatalf("Codex logo = %q, want WSFold icon", got)
 	}
 
+	claude := readJSONMap(t, filepath.Join(root, "plugins", "wsfold", ".claude-plugin", "plugin.json"))
+	assertMissingField(t, claude, "interface")
+	assertMissingField(t, claude, "logo")
+	assertMissingField(t, claude, "category")
+
 	cursor := readJSONMap(t, filepath.Join(root, "plugins", "wsfold", ".cursor-plugin", "plugin.json"))
+	assertMissingField(t, cursor, "interface")
+	if got := stringField(cursor, "category"); got != "Development" {
+		t.Fatalf("Cursor category = %q, want Development", got)
+	}
 	if got := stringField(cursor, "logo"); got != "./icons/logo.png" {
 		t.Fatalf("Cursor logo = %q, want WSFold icon", got)
 	}
@@ -67,11 +86,9 @@ func TestAgentSkillDistributionPluginManifests(t *testing.T) {
 		}
 	}
 
-	assertCodexMarketplaceSource(t, filepath.Join(root, ".agents", "plugins", "marketplace.json"), "./plugins/wsfold")
-	assertStringMarketplaceSource(t, filepath.Join(root, ".claude-plugin", "marketplace.json"), "./plugins/wsfold")
-	assertStringMarketplaceSource(t, filepath.Join(root, ".cursor-plugin", "marketplace.json"), "./plugins/wsfold")
-	assertMarketplacePluginDescription(t, filepath.Join(root, ".claude-plugin", "marketplace.json"))
-	assertMarketplacePluginDescription(t, filepath.Join(root, ".cursor-plugin", "marketplace.json"))
+	assertCodexMarketplace(t, filepath.Join(root, ".agents", "plugins", "marketplace.json"), pluginRoot)
+	assertClaudeMarketplace(t, filepath.Join(root, ".claude-plugin", "marketplace.json"), pluginRoot, description, version)
+	assertCursorMarketplace(t, filepath.Join(root, ".cursor-plugin", "marketplace.json"), pluginRoot, description)
 	assertSharedSkillDirs(t, root)
 }
 
@@ -393,31 +410,146 @@ func firstMarketplacePlugin(t *testing.T, path string) map[string]any {
 	return plugin
 }
 
-func assertCodexMarketplaceSource(t *testing.T, path string, want string) {
+func assertCodexMarketplace(t *testing.T, path string, wantSource string) {
 	t.Helper()
+	manifest := readJSONMap(t, path)
+	if got := stringField(manifest, "name"); got != "wsfold" {
+		t.Fatalf("%s name = %q, want wsfold", path, got)
+	}
+	iface, ok := manifest["interface"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s missing root interface object: %#v", path, manifest)
+	}
+	if got := stringField(iface, "displayName"); got != "WSFold Plugin Marketplace" {
+		t.Fatalf("%s interface.displayName = %q, want WSFold Plugin Marketplace", path, got)
+	}
 	plugin := firstMarketplacePlugin(t, path)
+	if got := stringField(plugin, "name"); got != "wsfold" {
+		t.Fatalf("%s plugin name = %q, want wsfold", path, got)
+	}
 	source, ok := plugin["source"].(map[string]any)
 	if !ok {
 		t.Fatalf("%s plugin source is not an object: %#v", path, plugin["source"])
 	}
-	if got := stringField(source, "path"); got != want {
-		t.Fatalf("%s source.path = %q, want %q", path, got, want)
+	if got := stringField(source, "source"); got != "local" {
+		t.Fatalf("%s source.source = %q, want local", path, got)
+	}
+	if got := stringField(source, "path"); got != wantSource {
+		t.Fatalf("%s source.path = %q, want %q", path, got, wantSource)
+	}
+	policy, ok := plugin["policy"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s plugin policy is not an object: %#v", path, plugin["policy"])
+	}
+	if got := stringField(policy, "installation"); got != "AVAILABLE" {
+		t.Fatalf("%s policy.installation = %q, want AVAILABLE", path, got)
+	}
+	if got := stringField(plugin, "category"); got != "Development" {
+		t.Fatalf("%s category = %q, want Development", path, got)
+	}
+	assertMissingField(t, plugin, "description")
+	assertMissingField(t, plugin, "interface")
+}
+
+func assertClaudeMarketplace(t *testing.T, path string, wantSource string, wantDescription string, wantVersion string) {
+	t.Helper()
+	manifest := readJSONMap(t, path)
+	if got := stringField(manifest, "name"); got != "wsfold" {
+		t.Fatalf("%s name = %q, want wsfold", path, got)
+	}
+	owner, ok := manifest["owner"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s missing owner object: %#v", path, manifest)
+	}
+	if got := stringField(owner, "name"); got != "Atilarum" {
+		t.Fatalf("%s owner.name = %q, want Atilarum", path, got)
+	}
+	if got := stringField(manifest, "description"); got != "WSFold Plugin Marketplace" {
+		t.Fatalf("%s description = %q, want WSFold Plugin Marketplace", path, got)
+	}
+	plugin := firstMarketplacePlugin(t, path)
+	if got := stringField(plugin, "name"); got != "wsfold" {
+		t.Fatalf("%s plugin name = %q, want wsfold", path, got)
+	}
+	if got := stringField(plugin, "source"); got != wantSource {
+		t.Fatalf("%s source = %q, want %q", path, got, wantSource)
+	}
+	if got := stringField(plugin, "description"); got != wantDescription {
+		t.Fatalf("%s plugin description = %q, want %q", path, got, wantDescription)
+	}
+	if got := stringField(plugin, "version"); got != wantVersion {
+		t.Fatalf("%s plugin version = %q, want %q", path, got, wantVersion)
+	}
+	author, ok := plugin["author"].(map[string]any)
+	if !ok {
+		t.Fatalf("%s plugin author is not an object: %#v", path, plugin["author"])
+	}
+	if got := stringField(author, "name"); got != "Atilarum" {
+		t.Fatalf("%s plugin author.name = %q, want Atilarum", path, got)
+	}
+	for _, field := range []string{"homepage", "repository"} {
+		if got := stringField(plugin, field); got != "https://github.com/atilarum/wsfold" {
+			t.Fatalf("%s plugin %s = %q, want WSFold repository URL", path, field, got)
+		}
+	}
+	if got := stringField(plugin, "license"); got != "MIT" {
+		t.Fatalf("%s plugin license = %q, want MIT", path, got)
+	}
+	if got := stringField(plugin, "category"); got != "Development" {
+		t.Fatalf("%s plugin category = %q, want Development", path, got)
+	}
+	assertStringArray(t, path, plugin, "keywords", []string{"agents", "workspace", "multi-repo", "worktree", "repository-context"})
+	assertMissingField(t, plugin, "interface")
+}
+
+func assertCursorMarketplace(t *testing.T, path string, wantSource string, wantDescription string) {
+	t.Helper()
+	manifest := readJSONMap(t, path)
+	if got := stringField(manifest, "name"); got != "wsfold" {
+		t.Fatalf("%s name = %q, want wsfold", path, got)
+	}
+	if got := stringField(manifest, "displayName"); got != "WSFold" {
+		t.Fatalf("%s displayName = %q, want WSFold", path, got)
+	}
+	if got := stringField(manifest, "description"); got != "WSFold Plugin Marketplace" {
+		t.Fatalf("%s description = %q, want WSFold Plugin Marketplace", path, got)
+	}
+	plugin := firstMarketplacePlugin(t, path)
+	if got := stringField(plugin, "name"); got != "wsfold" {
+		t.Fatalf("%s plugin name = %q, want wsfold", path, got)
+	}
+	if got := stringField(plugin, "source"); got != wantSource {
+		t.Fatalf("%s source = %q, want %q", path, got, wantSource)
+	}
+	if got := stringField(plugin, "description"); got != wantDescription {
+		t.Fatalf("%s plugin description = %q, want %q", path, got, wantDescription)
+	}
+	assertMissingField(t, plugin, "interface")
+}
+
+func assertMissingField(t *testing.T, values map[string]any, field string) {
+	t.Helper()
+	if _, ok := values[field]; ok {
+		t.Fatalf("unexpected field %s in %#v", field, values)
 	}
 }
 
-func assertStringMarketplaceSource(t *testing.T, path string, want string) {
+func assertStringArray(t *testing.T, path string, values map[string]any, field string, want []string) {
 	t.Helper()
-	plugin := firstMarketplacePlugin(t, path)
-	if got := stringField(plugin, "source"); got != want {
-		t.Fatalf("%s source = %q, want %q", path, got, want)
+	raw, ok := values[field].([]any)
+	if !ok {
+		t.Fatalf("%s %s is not an array: %#v", path, field, values[field])
 	}
-}
-
-func assertMarketplacePluginDescription(t *testing.T, path string) {
-	t.Helper()
-	plugin := firstMarketplacePlugin(t, path)
-	if !strings.Contains(stringField(plugin, "description"), "WSFold") {
-		t.Fatalf("%s plugin description should name WSFold: %#v", path, plugin["description"])
+	var got []string
+	for _, item := range raw {
+		value, ok := item.(string)
+		if !ok {
+			t.Fatalf("%s %s contains non-string item: %#v", path, field, item)
+		}
+		got = append(got, value)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("%s %s = %#v, want %#v", path, field, got, want)
 	}
 }
 
