@@ -59,7 +59,7 @@ fails before a WSFold command is needed.
    workflow.
 2. Run `command -v brew`.
 3. If Homebrew is missing, tell the user Homebrew is the preferred installation
-   path and ask permission to install it by following the official instructions
+   path, ask permission, then install it by following the official instructions
    at https://brew.sh/.
 4. Install WSFold with `brew tap atilarum/wsfold` then `brew install wsfold`.
    If Homebrew cannot be used, read
