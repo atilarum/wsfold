@@ -360,3 +360,43 @@ trusted:
 		t.Fatalf("replacement should be marked cache-inferred")
 	}
 }
+
+func TestTargetedSummonDoesNotReuseStaleSnapshotAfterRefresh(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	stalePath := filepath.Join(h.TrustedRoot, "service")
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig returned error: %v", err)
+	}
+	if err := writeTrustedLocalCache(trustedLocalSnapshot{
+		TrustedDir: filepath.Clean(cfg.TrustedDir),
+		Entries: []trustedLocalCacheEntry{{
+			CheckoutPath: stalePath,
+			FolderName:   "service",
+			Slug:         "acme/service",
+			Fingerprint:  "stale",
+		}},
+	}); err != nil {
+		t.Fatalf("write trusted-local cache: %v", err)
+	}
+	h.WriteExecutable("gh", "#!/bin/sh\nexit 1\n")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{
+		"GIT_CONFIG_GLOBAL=" + h.GitConfig,
+		"PATH=" + filepath.Join(h.Root, "bin") + string(os.PathListSeparator) + os.Getenv("PATH"),
+	}}
+	err = app.Summon(h.Workspace, "acme/service")
+	if err == nil {
+		t.Fatalf("Summon should report the missing repo instead of attaching stale cache path")
+	}
+	if !strings.Contains(err.Error(), "trusted remote clone requires GitHub CLI authentication") {
+		t.Fatalf("Summon returned unexpected error: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(h.Workspace, "service")); !os.IsNotExist(err) {
+		t.Fatalf("Summon should not attach stale cache path, lstat err: %v", err)
+	}
+}

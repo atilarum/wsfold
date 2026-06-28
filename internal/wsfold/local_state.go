@@ -71,7 +71,9 @@ func (a *App) ensureLocalState(primaryRoot string, scope localStateScope) (*comm
 		if err != nil {
 			return nil, err
 		}
-		targetRepo, found, err := a.resolveTargetedTrustedRepo(cfg, manifest, snapshot, targetRef)
+		var targetRepo Repo
+		var found bool
+		snapshot, targetRepo, found, err = a.resolveTargetedTrustedRepo(cfg, manifest, snapshot, targetRef)
 		if err != nil {
 			return nil, err
 		}
@@ -122,31 +124,32 @@ func targetedTrustedRepoRef(manifest Manifest, ref string) (string, error) {
 	return ref, nil
 }
 
-func (a *App) resolveTargetedTrustedRepo(cfg Config, manifest Manifest, snapshot trustedLocalSnapshot, ref string) (Repo, bool, error) {
+func (a *App) resolveTargetedTrustedRepo(cfg Config, manifest Manifest, snapshot trustedLocalSnapshot, ref string) (trustedLocalSnapshot, Repo, bool, error) {
 	ref = normalizeRepoRef(ref)
 	if ref == "" {
-		return Repo{}, false, nil
+		return snapshot, Repo{}, false, nil
 	}
 
 	if repo, ok := validTrustedManifestCacheRepo(manifest, snapshot, ref); ok {
-		return repo, true, nil
+		return snapshot, repo, true, nil
 	}
 	if repo, ok, err := resolveTrustedRepoFromSnapshot(cfg, a.Runner, snapshot, ref); err != nil || ok {
-		return repo, ok, err
+		return snapshot, repo, ok, err
 	}
 	if repo, ok, err := resolveCheapTrustedCandidate(cfg, a.Runner, ref); err != nil || ok {
-		return repo, ok, err
+		return snapshot, repo, ok, err
 	}
 
 	refreshed, _, err := refreshTrustedLocalCache(cfg, a.Runner)
 	if err != nil {
-		return Repo{}, false, err
+		return snapshot, Repo{}, false, err
 	}
+	snapshot = refreshed
 	repo, ok, err := resolveTrustedRepoFromSnapshot(cfg, a.Runner, refreshed, ref)
 	if err != nil || ok {
-		return repo, ok, err
+		return snapshot, repo, ok, err
 	}
-	return Repo{}, false, nil
+	return snapshot, Repo{}, false, nil
 }
 
 func validTrustedManifestCacheRepo(manifest Manifest, snapshot trustedLocalSnapshot, ref string) (Repo, bool) {
