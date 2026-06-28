@@ -45,7 +45,7 @@ func loadManifest(primaryRoot string) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
-	manifest := runtimeManifestFromWorkspace(primaryRoot, workspaceManifest, cache, Runner{})
+	manifest := runtimeManifestFromWorkspace(primaryRoot, workspaceManifest, cache)
 	if err := normalizeManifest(&manifest); err != nil {
 		return Manifest{}, err
 	}
@@ -175,7 +175,7 @@ func loadWorkspaceCache(primaryRoot string) (WorkspaceCache, error) {
 	return cache, nil
 }
 
-func runtimeManifestFromWorkspace(primaryRoot string, workspaceManifest WorkspaceManifest, cache WorkspaceCache, runner Runner) Manifest {
+func runtimeManifestFromWorkspace(primaryRoot string, workspaceManifest WorkspaceManifest, cache WorkspaceCache) Manifest {
 	trustedCache := map[string]TrustedCacheEntry{}
 	for _, entry := range cache.Trusted {
 		trustedCache[normalizeRepoRef(entry.Ref)] = entry
@@ -184,7 +184,6 @@ func runtimeManifestFromWorkspace(primaryRoot string, workspaceManifest Workspac
 	for _, entry := range cache.External {
 		externalCache[normalizeRepoRef(entry.Ref)] = entry
 	}
-	localResolver := lazyRepoResolver{runner: runner}
 
 	manifest := Manifest{
 		Version:          manifestVersion,
@@ -198,16 +197,6 @@ func runtimeManifestFromWorkspace(primaryRoot string, workspaceManifest Workspac
 	for _, entry := range workspaceManifest.Trusted {
 		cacheEntry, cachePresent := trustedCache[normalizeRepoRef(entry.Ref)]
 		var resolutionDetail string
-		cacheInferred := false
-		if strings.TrimSpace(cacheEntry.CheckoutPath) == "" {
-			if repo, err := localResolver.resolve(entry.Ref, TrustClassTrusted); err == nil && !repo.IsWorktree {
-				cacheEntry.Ref = entry.Ref
-				cacheEntry.CheckoutPath = repo.CheckoutPath
-				cacheInferred = true
-			} else if err != nil {
-				resolutionDetail = fmt.Sprintf("cache missing for %s; %v", entry.Ref, err)
-			}
-		}
 		backend := cacheEntry.Backend
 		if backend == "" {
 			backend = AttachmentBackendSymlink
@@ -224,7 +213,7 @@ func runtimeManifestFromWorkspace(primaryRoot string, workspaceManifest Workspac
 			MountPath:    filepath.Join(primaryRoot, filepath.FromSlash(entry.Path)),
 		}
 		runtime.ResolutionDetail = resolutionDetail
-		runtime.CacheInferred = cacheInferred
+		runtime.CacheInferred = false
 		runtime.CachePresent = cachePresent
 		runtime.CachedCheckout = cacheEntry.CheckoutPath
 		runtime.CachedBackend = cacheEntry.Backend
@@ -237,24 +226,13 @@ func runtimeManifestFromWorkspace(primaryRoot string, workspaceManifest Workspac
 
 	for _, entry := range workspaceManifest.External {
 		cacheEntry, cachePresent := externalCache[normalizeRepoRef(entry.Ref)]
-		var resolutionDetail string
-		cacheInferred := false
-		if strings.TrimSpace(cacheEntry.CheckoutPath) == "" {
-			if repo, err := localResolver.resolve(entry.Ref, TrustClassExternal); err == nil && !repo.IsWorktree {
-				cacheEntry.Ref = entry.Ref
-				cacheEntry.CheckoutPath = repo.CheckoutPath
-				cacheInferred = true
-			} else if err != nil {
-				resolutionDetail = fmt.Sprintf("cache missing for %s; %v", entry.Ref, err)
-			}
-		}
 		runtime := Entry{
 			RepoRef:      strings.TrimSpace(entry.Ref),
 			CheckoutPath: filepath.Clean(cacheEntry.CheckoutPath),
 			TrustClass:   TrustClassExternal,
 		}
-		runtime.ResolutionDetail = resolutionDetail
-		runtime.CacheInferred = cacheInferred
+		runtime.ResolutionDetail = ""
+		runtime.CacheInferred = false
 		runtime.CachePresent = cachePresent
 		runtime.CachedCheckout = cacheEntry.CheckoutPath
 		if strings.TrimSpace(cacheEntry.CheckoutPath) == "" {
@@ -280,36 +258,6 @@ func runtimeManifestFromWorkspace(primaryRoot string, workspaceManifest Workspac
 		manifest.ManagedWorktrees = append(manifest.ManagedWorktrees, runtime)
 	}
 	return manifest
-}
-
-type lazyRepoResolver struct {
-	runner Runner
-	loaded bool
-	cfg    Config
-	err    error
-}
-
-func (l *lazyRepoResolver) resolve(ref string, requested TrustClass) (Repo, error) {
-	cfg, err := l.getConfig()
-	if err != nil {
-		return Repo{}, err
-	}
-	return resolveExistingRepo(cfg, l.runner, ref, requested)
-}
-
-func (l *lazyRepoResolver) getConfig() (Config, error) {
-	if l.loaded {
-		return l.cfg, l.err
-	}
-	l.loaded = true
-
-	cfg, err := LoadConfig()
-	if err != nil {
-		l.err = fmt.Errorf("load config: %w", err)
-		return Config{}, l.err
-	}
-	l.cfg = cfg
-	return l.cfg, nil
 }
 
 func workspaceManifestAndCacheFromRuntime(primaryRoot string, manifest Manifest) (WorkspaceManifest, WorkspaceCache) {

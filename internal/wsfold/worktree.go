@@ -18,7 +18,20 @@ type WorktreeSource struct {
 }
 
 func resolveWorktreeSource(cfg Config, runner Runner, ref string) (WorktreeSource, error) {
-	repo, err := resolveExistingRepo(cfg, runner, ref, TrustClassTrusted)
+	return resolveWorktreeSourceWithState(cfg, runner, ref, nil)
+}
+
+func resolveWorktreeSourceWithState(cfg Config, runner Runner, ref string, state *commandState) (WorktreeSource, error) {
+	var repo Repo
+	var err error
+	if state != nil && state.targetFound {
+		repo = state.targetRepo
+		err = nil
+	} else if state != nil {
+		repo, err = state.local.resolve(ref)
+	} else {
+		repo, err = resolveExistingRepo(cfg, runner, ref, TrustClassTrusted)
+	}
 	if err == nil {
 		if repo.TrustClass != TrustClassTrusted {
 			return WorktreeSource{}, fmt.Errorf("repo ref %q is not a trusted repository source", ref)

@@ -116,6 +116,7 @@ func (h *Harness) Env() []string {
 		"WSFOLD_EXTERNAL_DIR=" + h.ExternalRoot,
 		"WSFOLD_TRUSTED_GITHUB_ORGS=acme,platform-team",
 		"GIT_CONFIG_GLOBAL=" + h.GitConfig,
+		"XDG_CACHE_HOME=" + filepath.Join(h.Root, "cache"),
 	}
 }
 

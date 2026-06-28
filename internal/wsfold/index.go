@@ -275,6 +275,28 @@ func ambiguityError(ref string, candidates []Repo) error {
 }
 
 func findOrCloneRepo(cfg Config, runner Runner, progress io.Writer, ref string, requested TrustClass) (Repo, error) {
+	return findOrCloneRepoWithState(cfg, runner, progress, ref, requested, nil)
+}
+
+func findOrCloneRepoWithState(cfg Config, runner Runner, progress io.Writer, ref string, requested TrustClass, state *commandState) (Repo, error) {
+	if requested == TrustClassTrusted && state != nil {
+		if state.targetFound && manifestEntryCheapMatch(Entry{
+			RepoRef:      state.targetRepo.DisplayRef(),
+			CheckoutPath: state.targetRepo.CheckoutPath,
+			TrustClass:   TrustClassTrusted,
+		}, ref, state.local) {
+			return state.targetRepo, nil
+		}
+		if repo, err := state.local.resolve(ref); err == nil {
+			return repo, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return Repo{}, err
+		}
+		if state.scope.kind == localStateScopeTargeted {
+			return cloneOrMissingRepo(cfg, runner, progress, ref, requested)
+		}
+	}
+
 	repo, err := resolveExistingRepo(cfg, runner, ref, requested)
 	if err == nil {
 		return repo, nil
@@ -282,7 +304,10 @@ func findOrCloneRepo(cfg Config, runner Runner, progress io.Writer, ref string, 
 	if !errors.Is(err, os.ErrNotExist) {
 		return Repo{}, err
 	}
+	return cloneOrMissingRepo(cfg, runner, progress, ref, requested)
+}
 
+func cloneOrMissingRepo(cfg Config, runner Runner, progress io.Writer, ref string, requested TrustClass) (Repo, error) {
 	classification, owner, name, err := classifyCloneTarget(cfg, ref)
 	if err != nil {
 		return Repo{}, err

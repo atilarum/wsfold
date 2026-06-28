@@ -30,6 +30,7 @@ type TrustedSummonPickerState struct {
 }
 
 func (a *App) Complete(cwd string, command string, prefix string) ([]CompletionCandidate, error) {
+	defer a.beginCommand()()
 	switch command {
 	case "summon":
 		return a.completeRepoIndex(cwd, prefix, TrustClassTrusted)
@@ -47,14 +48,19 @@ func (a *App) Complete(cwd string, command string, prefix string) ([]CompletionC
 }
 
 func (a *App) TrustedSummonPickerState(cwd string) (TrustedSummonPickerState, error) {
+	defer a.beginCommand()()
 	cfg, err := LoadConfig()
 	if err != nil {
 		return TrustedSummonPickerState{}, err
 	}
 
-	localCandidates, err := trustedLocalCompletionCandidates(cwd, cfg.TrustedDir, a.Runner)
+	manifest, snapshot, hasWorkspace, err := a.trustedCompletionContext(cwd, cfg)
 	if err != nil {
 		return TrustedSummonPickerState{}, err
+	}
+	localCandidates := trustedLocalCompletionCandidatesFromSnapshot(snapshot, attachedCheckoutPathsFromManifest(manifest), "")
+	if hasWorkspace {
+		enrichCandidateRealizationsFromManifest(manifest, localCandidates)
 	}
 
 	remoteState, err := trustedRemoteIndexState(cfg, a.Runner)
@@ -62,9 +68,9 @@ func (a *App) TrustedSummonPickerState(cwd string) (TrustedSummonPickerState, er
 		return TrustedSummonPickerState{}, err
 	}
 
-	declaredCandidates := declaredTrustedCompletionCandidates(cwd, "")
+	declaredCandidates := declaredTrustedCompletionCandidatesFromManifest(manifest, snapshot, "")
 	candidates := mergeTrustedSummonCandidates(append(localCandidates, declaredCandidates...), trustedRemoteCompletionCandidates(remoteState.Repos))
-	candidates = append(candidates, managedWorktreeCompletionCandidates(cwd, true, "")...)
+	candidates = append(candidates, managedWorktreeCompletionCandidatesFromManifest(manifest, true, "")...)
 	return TrustedSummonPickerState{
 		Candidates: candidates,
 		Refreshing: remoteState.NeedsRefresh && remoteState.GitHubReady,
@@ -90,14 +96,19 @@ func (a *App) RefreshTrustedSummonPickerState(cwd string) (TrustedSummonPickerSt
 }
 
 func (a *App) WorktreeSourcePickerState(cwd string) (TrustedSummonPickerState, error) {
+	defer a.beginCommand()()
 	cfg, err := LoadConfig()
 	if err != nil {
 		return TrustedSummonPickerState{}, err
 	}
 
-	localCandidates, err := trustedLocalCompletionCandidates(cwd, cfg.TrustedDir, a.Runner)
+	manifest, snapshot, hasWorkspace, err := a.trustedCompletionContext(cwd, cfg)
 	if err != nil {
 		return TrustedSummonPickerState{}, err
+	}
+	localCandidates := trustedLocalCompletionCandidatesFromSnapshot(snapshot, attachedCheckoutPathsFromManifest(manifest), "")
+	if hasWorkspace {
+		enrichCandidateRealizationsFromManifest(manifest, localCandidates)
 	}
 	for i := range localCandidates {
 		if localCandidates[i].IsWorktree {
@@ -111,7 +122,7 @@ func (a *App) WorktreeSourcePickerState(cwd string) (TrustedSummonPickerState, e
 	}
 
 	return TrustedSummonPickerState{
-		Candidates: append(mergeWorktreeSourceCandidates(localCandidates, trustedRemoteCompletionCandidates(remoteState.Repos)), managedWorktreeCompletionCandidates(cwd, true, "")...),
+		Candidates: append(mergeWorktreeSourceCandidates(localCandidates, trustedRemoteCompletionCandidates(remoteState.Repos)), managedWorktreeCompletionCandidatesFromManifest(manifest, true, "")...),
 		Refreshing: remoteState.NeedsRefresh && remoteState.GitHubReady,
 		Status:     remoteState.StatusMessage,
 	}, nil
@@ -140,27 +151,29 @@ func (a *App) completeRepoIndex(cwd string, prefix string, requested TrustClass)
 		return nil, err
 	}
 
-	root := cfg.ExternalDir
 	if requested == TrustClassTrusted {
-		root = cfg.TrustedDir
+		manifest, snapshot, hasWorkspace, err := a.trustedCompletionContext(cwd, cfg)
+		if err != nil {
+			return nil, err
+		}
+		candidates := trustedLocalCompletionCandidatesFromSnapshot(snapshot, attachedCheckoutPathsFromManifest(manifest), prefix)
+		if hasWorkspace {
+			enrichCandidateRealizationsFromManifest(manifest, candidates)
+			candidates = append(candidates, declaredTrustedCompletionCandidatesFromManifest(manifest, snapshot, prefix)...)
+			candidates = append(candidates, managedWorktreeCompletionCandidatesFromManifest(manifest, true, prefix)...)
+		}
+		candidates = dedupeCandidatesByKey(candidates)
+		sortCandidates(candidates)
+		return candidates, nil
 	}
 
-	repos, err := discoverCompletionRepos(root, requested, a.Runner)
+	repos, err := discoverCompletionRepos(cfg.ExternalDir, requested, a.Runner)
 	if err != nil {
 		return nil, err
 	}
-	if requested == TrustClassTrusted {
-		repos = filterPrimaryRepos(repos)
-	}
-
 	attached := attachedCheckoutPaths(cwd)
 	candidates := completionCandidatesFromRepos(repos, attached, prefix)
 	enrichCandidateRealizations(cwd, candidates)
-	if requested == TrustClassTrusted {
-		candidates = append(candidates, declaredTrustedCompletionCandidates(cwd, prefix)...)
-		candidates = append(candidates, managedWorktreeCompletionCandidates(cwd, true, prefix)...)
-	}
-
 	candidates = dedupeCandidatesByKey(candidates)
 	sortCandidates(candidates)
 	return candidates, nil
@@ -187,15 +200,22 @@ func (a *App) completeWorktreeSources(cwd string, prefix string) ([]CompletionCa
 	return filtered, nil
 }
 
-func trustedLocalCompletionCandidates(cwd string, root string, runner Runner) ([]CompletionCandidate, error) {
-	repos, err := discoverCompletionRepos(root, TrustClassTrusted, runner)
+func (a *App) trustedCompletionContext(cwd string, cfg Config) (Manifest, trustedLocalSnapshot, bool, error) {
+	primaryRoot, err := resolveWorkspaceRoot(cwd)
 	if err != nil {
-		return nil, err
+		snapshot, _, refreshErr := refreshTrustedLocalCache(cfg, a.Runner)
+		return Manifest{}, snapshot, false, refreshErr
 	}
-	repos = filterPrimaryRepos(repos)
-	candidates := completionCandidatesFromRepos(repos, attachedCheckoutPaths(cwd), "")
-	enrichCandidateRealizations(cwd, candidates)
-	return candidates, nil
+	state, err := a.ensureLocalState(primaryRoot, fullLocalStateScope())
+	if err != nil {
+		return Manifest{}, trustedLocalSnapshot{}, false, err
+	}
+	return state.manifest, state.local, true, nil
+}
+
+func trustedLocalCompletionCandidatesFromSnapshot(snapshot trustedLocalSnapshot, attached map[string]bool, prefix string) []CompletionCandidate {
+	repos := filterPrimaryRepos(snapshot.repos())
+	return completionCandidatesFromRepos(repos, attached, prefix)
 }
 
 func discoverCompletionRepos(root string, trustClass TrustClass, runner Runner) ([]Repo, error) {
@@ -235,16 +255,17 @@ func (a *App) completeManifest(cwd string, prefix string) ([]CompletionCandidate
 		return nil, err
 	}
 
-	manifest, err := loadManifest(primaryRoot)
+	state, err := a.ensureLocalState(primaryRoot, fullLocalStateScope())
 	if err != nil {
 		return nil, err
 	}
+	manifest := state.manifest
 
 	all := append(append([]Entry{}, manifest.Trusted...), manifest.External...)
 	repos := make([]Repo, 0, len(all))
 	entryByPath := map[string]Entry{}
 	for _, entry := range all {
-		repo := hydrateManifestRepo(entry, a.Runner)
+		repo := manifestEntryRepo(entry, state.local)
 		repos = append(repos, repo)
 		entryByPath[entry.CheckoutPath] = entry
 	}
@@ -316,15 +337,7 @@ func filterPrimaryRepos(repos []Repo) []Repo {
 	return filtered
 }
 
-func managedWorktreeCompletionCandidates(cwd string, disabled bool, prefix string) []CompletionCandidate {
-	primaryRoot, err := resolveWorkspaceRoot(cwd)
-	if err != nil {
-		return nil
-	}
-	manifest, err := loadManifest(primaryRoot)
-	if err != nil {
-		return nil
-	}
+func managedWorktreeCompletionCandidatesFromManifest(manifest Manifest, disabled bool, prefix string) []CompletionCandidate {
 	candidates := make([]CompletionCandidate, 0, len(manifest.ManagedWorktrees))
 	for _, entry := range manifest.ManagedWorktrees {
 		if entry.UnsupportedLegacy {
@@ -333,7 +346,7 @@ func managedWorktreeCompletionCandidates(cwd string, disabled bool, prefix strin
 		if prefix != "" && !strings.HasPrefix(strings.ToLower(entry.RepoRef), strings.ToLower(prefix)) {
 			continue
 		}
-		realization := InspectManagedWorktreeRealization(manifest, entry, Runner{})
+		realization := InspectManagedWorktreeStatusRealization(manifest, entry)
 		entryDisabled := disabled
 		if realization.Status == RealizationUnmounted {
 			entryDisabled = false
@@ -359,21 +372,13 @@ func managedWorktreeCompletionCandidates(cwd string, disabled bool, prefix strin
 	return candidates
 }
 
-func declaredTrustedCompletionCandidates(cwd string, prefix string) []CompletionCandidate {
-	primaryRoot, err := resolveWorkspaceRoot(cwd)
-	if err != nil {
-		return nil
-	}
-	manifest, err := loadManifest(primaryRoot)
-	if err != nil {
-		return nil
-	}
+func declaredTrustedCompletionCandidatesFromManifest(manifest Manifest, snapshot trustedLocalSnapshot, prefix string) []CompletionCandidate {
 	candidates := make([]CompletionCandidate, 0, len(manifest.Trusted))
 	for _, entry := range manifest.Trusted {
 		if strings.TrimSpace(entry.ResolutionDetail) == "" && isGitRepo(entry.CheckoutPath) {
 			continue
 		}
-		repo := hydrateManifestRepo(entry, Runner{})
+		repo := manifestEntryRepo(entry, snapshot)
 		value := completionFolderName(entry.CheckoutPath)
 		if strings.TrimSpace(repo.Slug) != "" {
 			value = repo.DisplayRef()
@@ -415,6 +420,19 @@ func enrichCandidateRealizations(cwd string, candidates []CompletionCandidate) {
 	}
 }
 
+func enrichCandidateRealizationsFromManifest(manifest Manifest, candidates []CompletionCandidate) {
+	statusByPath := realizationStatusByCheckoutPathFromManifest(manifest)
+	for i := range candidates {
+		if status := statusByPath[candidates[i].Key]; status != "" {
+			candidates[i].Realization = status
+			candidates[i].Attached = true
+			if status == RealizationInvalid {
+				candidates[i].Disabled = true
+			}
+		}
+	}
+}
+
 func realizationStatusByCheckoutPath(cwd string) map[string]RealizationStatus {
 	statuses := map[string]RealizationStatus{}
 	primaryRoot, err := resolveWorkspaceRoot(cwd)
@@ -425,6 +443,15 @@ func realizationStatusByCheckoutPath(cwd string) map[string]RealizationStatus {
 	if err != nil {
 		return statuses
 	}
+	for _, entry := range manifest.Trusted {
+		status := InspectAttachmentRealization(entry).Status
+		statuses[repoCompletionKey(Repo{CheckoutPath: entry.CheckoutPath, TrustClass: TrustClassTrusted})] = status
+	}
+	return statuses
+}
+
+func realizationStatusByCheckoutPathFromManifest(manifest Manifest) map[string]RealizationStatus {
+	statuses := map[string]RealizationStatus{}
 	for _, entry := range manifest.Trusted {
 		status := InspectAttachmentRealization(entry).Status
 		statuses[repoCompletionKey(Repo{CheckoutPath: entry.CheckoutPath, TrustClass: TrustClassTrusted})] = status
@@ -707,6 +734,26 @@ func attachedCheckoutPaths(cwd string) map[string]bool {
 		attached[entry.WorkspacePath] = true
 	}
 
+	return attached
+}
+
+func attachedCheckoutPathsFromManifest(manifest Manifest) map[string]bool {
+	attached := map[string]bool{}
+	for _, entry := range manifest.Trusted {
+		if strings.TrimSpace(entry.CheckoutPath) != "" {
+			attached[entry.CheckoutPath] = true
+		}
+	}
+	for _, entry := range manifest.External {
+		if strings.TrimSpace(entry.CheckoutPath) != "" {
+			attached[entry.CheckoutPath] = true
+		}
+	}
+	for _, entry := range manifest.ManagedWorktrees {
+		if strings.TrimSpace(entry.WorkspacePath) != "" {
+			attached[entry.WorkspacePath] = true
+		}
+	}
 	return attached
 }
 

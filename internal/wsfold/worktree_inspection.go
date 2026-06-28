@@ -99,6 +99,56 @@ func InspectManagedWorktree(manifest Manifest, entry ManagedWorktreeEntry, runne
 	return result
 }
 
+func InspectManagedWorktreeShallow(manifest Manifest, entry ManagedWorktreeEntry) ManagedWorktreeInspection {
+	result := ManagedWorktreeInspection{Entry: entry}
+	if entry.UnsupportedLegacy {
+		result.State = ManagedWorktreeUnsupportedLegacy
+		result.Reason = "manifest entry is marked as unsupported legacy state"
+		return result
+	}
+	if strings.TrimSpace(entry.Branch) == "" {
+		result.State = ManagedWorktreeBranchlessBlocked
+		result.Reason = "managed worktree has no recorded branch"
+		return result
+	}
+
+	primary, ok := findPrimaryEntryForManagedWorktree(manifest, entry)
+	if !ok {
+		result.State = ManagedWorktreePrimaryUnavailable
+		result.Reason = "primary repository attachment is not in the current manifest"
+		return result
+	}
+	result.PrimaryEntry = primary
+	if !isGitRepo(primary.MountPath) {
+		result.State = ManagedWorktreePrimaryUnavailable
+		result.Reason = "primary repository attachment is not available at its workspace path"
+		return result
+	}
+
+	if _, err := os.Stat(entry.WorkspacePath); err != nil {
+		if os.IsNotExist(err) {
+			result.State = ManagedWorktreeMissing
+			result.Reason = "managed worktree directory is missing"
+			return result
+		}
+		result.State = ManagedWorktreeInvalidControlPath
+		result.Reason = fmt.Sprintf("stat managed worktree: %v", err)
+		return result
+	}
+
+	gitDir, adminDir, err := validateManagedWorktreeControlPath(entry, primary)
+	if err != nil {
+		result.State = ManagedWorktreeInvalidControlPath
+		result.Reason = err.Error()
+		return result
+	}
+	result.GitDir = gitDir
+	result.AdminDir = adminDir
+	result.Branch = entry.Branch
+	result.State = ManagedWorktreeHealthy
+	return result
+}
+
 func inspectMissingManagedWorktree(result ManagedWorktreeInspection, entry ManagedWorktreeEntry, primary Entry, runner Runner) ManagedWorktreeInspection {
 	worktreePaths, err := listWorktreeBranchPaths(runner, primary.MountPath)
 	if err != nil {

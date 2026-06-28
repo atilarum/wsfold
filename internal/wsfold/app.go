@@ -22,10 +22,12 @@ const (
 )
 
 type App struct {
-	Runner          Runner
-	Stdout          io.Writer
-	Stderr          io.Writer
-	backendSelector *trustedBackendSelector
+	Runner                            Runner
+	Stdout                            io.Writer
+	Stderr                            io.Writer
+	backendSelector                   *trustedBackendSelector
+	commandState                      *commandState
+	skipTrustedLocalCacheWriteThrough bool
 }
 
 type WorktreeOptions struct {
@@ -43,9 +45,15 @@ func NewApp() *App {
 
 func (a *App) beginCommand() func() {
 	previous := a.backendSelector
+	previousState := a.commandState
+	previousSkipTrustedLocalCacheWriteThrough := a.skipTrustedLocalCacheWriteThrough
 	a.backendSelector = newTrustedBackendSelector(a.Runner)
+	a.commandState = nil
+	a.skipTrustedLocalCacheWriteThrough = false
 	return func() {
 		a.backendSelector = previous
+		a.commandState = previousState
+		a.skipTrustedLocalCacheWriteThrough = previousSkipTrustedLocalCacheWriteThrough
 	}
 }
 
@@ -71,10 +79,12 @@ func (a *App) SummonAll(cwd string) error {
 	if err != nil {
 		return err
 	}
-	manifest, err := loadManifest(primaryRoot)
+	state, err := a.ensureLocalState(primaryRoot, fullLocalStateScope())
 	if err != nil {
 		return err
 	}
+	a.skipTrustedLocalCacheWriteThrough = true
+	manifest := state.manifest
 	if len(manifest.Trusted) == 0 && len(manifest.External) == 0 && len(manifest.ManagedWorktrees) == 0 {
 		if err := a.reconcileTrustedAgentAccess(primaryRoot, nil); err != nil {
 			return err
@@ -101,7 +111,7 @@ func (a *App) SummonAll(cwd string) error {
 		case status == RealizationInvalid:
 			invalid++
 		}
-		if current, loadErr := loadManifest(primaryRoot); loadErr == nil {
+		if current, loadErr := reloadSummonAllManifest(primaryRoot, manifest); loadErr == nil {
 			manifest = current
 		}
 		if reconciledEntry, ok := a.trustedEntryForAgentAccessReconcile(manifest, entry, status, err); ok {
@@ -125,7 +135,7 @@ func (a *App) SummonAll(cwd string) error {
 		case status == RealizationInvalid:
 			invalid++
 		}
-		if current, loadErr := loadManifest(primaryRoot); loadErr == nil {
+		if current, loadErr := reloadSummonAllManifest(primaryRoot, manifest); loadErr == nil {
 			manifest = current
 		}
 	}
@@ -142,7 +152,7 @@ func (a *App) SummonAll(cwd string) error {
 		case status == RealizationInvalid:
 			invalid++
 		}
-		if current, loadErr := loadManifest(primaryRoot); loadErr == nil {
+		if current, loadErr := reloadSummonAllManifest(primaryRoot, manifest); loadErr == nil {
 			manifest = current
 		}
 	}
@@ -160,6 +170,40 @@ func (a *App) SummonAll(cwd string) error {
 		return err
 	}
 	return nil
+}
+
+func reloadSummonAllManifest(primaryRoot string, previous Manifest) (Manifest, error) {
+	current, err := loadManifest(primaryRoot)
+	if err != nil {
+		return Manifest{}, err
+	}
+	preserveInMemoryExternalResolutions(&current, previous)
+	refreshManagedWorktreePrimaryFields(&current)
+	sortEntries(current.Trusted)
+	sortEntries(current.External)
+	sortManagedWorktrees(current.ManagedWorktrees)
+	return current, nil
+}
+
+func preserveInMemoryExternalResolutions(current *Manifest, previous Manifest) {
+	previousByRef := map[string]Entry{}
+	for _, entry := range previous.External {
+		if strings.TrimSpace(entry.CheckoutPath) == "" {
+			continue
+		}
+		previousByRef[normalizeRepoRef(entry.RepoRef)] = entry
+	}
+	for i := range current.External {
+		entry := &current.External[i]
+		if strings.TrimSpace(entry.CheckoutPath) != "" {
+			continue
+		}
+		if previousEntry, ok := previousByRef[normalizeRepoRef(entry.RepoRef)]; ok {
+			entry.CheckoutPath = previousEntry.CheckoutPath
+			entry.CacheInferred = previousEntry.CacheInferred
+			entry.ResolutionDetail = previousEntry.ResolutionDetail
+		}
+	}
 }
 
 func (a *App) trustedEntryForAgentAccessReconcile(manifest Manifest, entry Entry, status RealizationStatus, reconcileErr error) (Entry, bool) {
@@ -245,9 +289,19 @@ func (a *App) summon(cwd string, ref string, requested TrustClass) error {
 		return err
 	}
 
-	manifest, err := loadManifest(primaryRoot)
-	if err != nil {
-		return err
+	var manifest Manifest
+	var state *commandState
+	if requested == TrustClassTrusted {
+		state, err = a.ensureLocalState(primaryRoot, targetedLocalStateScope(ref))
+		if err != nil {
+			return err
+		}
+		manifest = state.manifest
+	} else {
+		manifest, err = loadManifest(primaryRoot)
+		if err != nil {
+			return err
+		}
 	}
 	if requested == TrustClassTrusted {
 		if worktree, ok, err := resolveManagedWorktreeEntry(manifest, ref); err != nil {
@@ -265,7 +319,7 @@ func (a *App) summon(cwd string, ref string, requested TrustClass) error {
 		if _, _, _, ok := splitSlugWithBranch(ref); ok {
 			return fmt.Errorf("summon does not attach unmanaged Git worktrees; create managed task worktrees with `wsfold worktree`")
 		}
-		if entry, ok, err := resolveTrustedManifestEntry(manifest, ref, a.Runner); err != nil {
+		if entry, ok, err := resolveTrustedManifestEntryWithSnapshot(manifest, ref, state.local); err != nil {
 			return err
 		} else if ok {
 			status, err := a.reconcileTrustedEntry(primaryRoot, cfg, manifest, entry)
@@ -282,7 +336,7 @@ func (a *App) summon(cwd string, ref string, requested TrustClass) error {
 		}
 	}
 
-	repo, err := findOrCloneRepo(cfg, a.Runner, a.Stdout, ref, requested)
+	repo, err := findOrCloneRepoWithState(cfg, a.Runner, a.Stdout, ref, requested, state)
 	if err != nil {
 		return err
 	}
@@ -352,13 +406,17 @@ func (a *App) Worktree(cwd string, ref string, branch string, opts WorktreeOptio
 	if err != nil {
 		return err
 	}
+	state, err := a.ensureLocalState(primaryRoot, targetedLocalStateScope(ref))
+	if err != nil {
+		return err
+	}
 
 	branch = strings.TrimSpace(branch)
 	if branch == "" {
 		return fmt.Errorf("worktree requires a branch name")
 	}
 
-	source, err := resolveWorktreeSource(cfg, a.Runner, ref)
+	source, err := resolveWorktreeSourceWithState(cfg, a.Runner, ref, state)
 	if err != nil {
 		return err
 	}
@@ -374,6 +432,9 @@ func (a *App) Worktree(cwd string, ref string, branch string, opts WorktreeOptio
 
 	source, err = ensureWorktreeSourceReady(source, a.Runner, a.Stdout)
 	if err != nil {
+		return err
+	}
+	if err := upsertTrustedLocalRepo(cfg, a.Runner, source.Repo); err != nil {
 		return err
 	}
 
@@ -551,6 +612,9 @@ func (a *App) attachRepo(primaryRoot string, cfg Config, repo Repo, requested Tr
 		if err := a.ensureTrustedAgentAccess(primaryRoot, entry); err != nil {
 			return err
 		}
+		if err := upsertTrustedLocalRepo(cfg, a.Runner, repo); err != nil {
+			return err
+		}
 	}
 
 	_, _ = fmt.Fprintln(a.Stdout, formatSummonSuccess(requested, repo, entry, primaryRoot))
@@ -603,7 +667,19 @@ func (a *App) persistTrustedCacheResolution(primaryRoot string, manifest Manifes
 	if err := saveManifest(primaryRoot, manifest); err != nil {
 		return err
 	}
-	return nil
+	if a.skipTrustedLocalCacheWriteThrough {
+		return nil
+	}
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+	if a.commandState != nil {
+		if cached, ok := a.commandState.local.entryByCheckoutPath(entry.CheckoutPath); ok {
+			return upsertTrustedLocalCacheEntry(cfg, cached)
+		}
+	}
+	return upsertTrustedLocalCheckout(cfg, a.Runner, entry.CheckoutPath)
 }
 
 func (a *App) reconcileExternalEntry(primaryRoot string, cfg Config, manifest Manifest, entry Entry) (RealizationStatus, error) {
@@ -858,6 +934,7 @@ func (a *App) Dismiss(cwd string, ref string) error {
 }
 
 func (a *App) DismissMany(cwd string, refs []string) error {
+	defer a.beginCommand()()
 	cfg, err := LoadConfig()
 	if err != nil {
 		return err
@@ -868,10 +945,15 @@ func (a *App) DismissMany(cwd string, refs []string) error {
 		return err
 	}
 
-	manifest, err := loadManifest(primaryRoot)
+	scope := fullLocalStateScope()
+	if len(refs) == 1 {
+		scope = targetedLocalStateScope(refs[0])
+	}
+	state, err := a.ensureLocalState(primaryRoot, scope)
 	if err != nil {
 		return err
 	}
+	manifest := state.manifest
 
 	type resolvedDismiss struct {
 		ref      string
@@ -888,7 +970,7 @@ func (a *App) DismissMany(cwd string, refs []string) error {
 			continue
 		}
 
-		entry, ok, err := resolveManifestEntry(manifest, ref, a.Runner)
+		entry, ok, err := resolveManifestEntryWithSnapshot(manifest, ref, state.local)
 		if err != nil {
 			return err
 		}
