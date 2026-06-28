@@ -1953,6 +1953,53 @@ func TestDismissLegacyAndExplicitSymlinkTrustedEntries(t *testing.T) {
 	}
 }
 
+func TestDismissLegacyTrustedWorktreeEntryPreservesExactRef(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	primaryPath := filepath.Join(h.Root, "primary-service")
+	h.InitRepo(primaryPath)
+	h.RunGit(primaryPath, "remote", "add", "origin", "https://github.com/acme/service.git")
+	h.RunGit(primaryPath, "branch", "feature/worktree")
+
+	worktreePath := filepath.Join(h.TrustedRoot, "service-feature")
+	h.RunGit(primaryPath, "worktree", "add", worktreePath, "feature/worktree")
+	linkPath := filepath.Join(h.Workspace, "service-feature")
+	if err := os.Symlink(worktreePath, linkPath); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+	entry := Entry{
+		RepoRef:      "acme/service/feature/worktree",
+		CheckoutPath: worktreePath,
+		TrustClass:   TrustClassTrusted,
+		Backend:      AttachmentBackendSymlink,
+		MountPath:    linkPath,
+	}
+	if err := saveManifest(h.Workspace, Manifest{Version: manifestVersion, PrimaryRoot: h.Workspace, Trusted: []Entry{entry}}); err != nil {
+		t.Fatalf("save manifest: %v", err)
+	}
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Dismiss(h.Workspace, "acme/service/feature/worktree"); err != nil {
+		t.Fatalf("Dismiss returned error: %v", err)
+	}
+	if _, err := os.Lstat(linkPath); !os.IsNotExist(err) {
+		t.Fatalf("expected symlink removal, got %v", err)
+	}
+	if _, err := os.Stat(worktreePath); err != nil {
+		t.Fatalf("worktree checkout should remain: %v", err)
+	}
+	manifest, err := loadManifest(h.Workspace)
+	if err != nil {
+		t.Fatalf("loadManifest returned error: %v", err)
+	}
+	if len(manifest.Trusted) != 0 {
+		t.Fatalf("expected legacy worktree manifest entry removal, got %#v", manifest.Trusted)
+	}
+}
+
 func TestDismissLinuxNativeBindRoutesToNativeCleanup(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnv(t, h)
