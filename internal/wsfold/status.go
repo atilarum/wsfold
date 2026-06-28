@@ -75,10 +75,6 @@ func (a *App) Status(cwd string) (StatusReport, error) {
 	return report, nil
 }
 
-func statusTrustedRow(entry Entry, runner Runner) StatusRow {
-	return statusTrustedRowWithSnapshot(entry, runner, trustedLocalSnapshot{})
-}
-
 func statusTrustedRowWithSnapshot(entry Entry, runner Runner, snapshot trustedLocalSnapshot) StatusRow {
 	row := StatusRow{
 		Ref:          statusRef(entry.RepoRef, filepath.Base(entry.CheckoutPath), entry.CheckoutPath),
@@ -138,7 +134,7 @@ func statusExternalRow(entry Entry, runner Runner) StatusRow {
 		Ref:          statusRef(entry.RepoRef, filepath.Base(entry.CheckoutPath), entry.CheckoutPath),
 		Folder:       statusFolder(entry.CheckoutPath),
 		Kind:         StatusKindExternal,
-		Branch:       statusBranch(runner, entry.CheckoutPath),
+		Branch:       statusBranchWithSnapshot(runner, entry.CheckoutPath, trustedLocalSnapshot{}),
 		CheckoutPath: entry.CheckoutPath,
 		Detail:       "ok",
 		Action:       "-",
@@ -303,10 +299,6 @@ func statusFolder(paths ...string) string {
 	return "-"
 }
 
-func statusBranch(runner Runner, path string) string {
-	return statusBranchWithSnapshot(runner, path, trustedLocalSnapshot{})
-}
-
 func statusBranchWithSnapshot(runner Runner, path string, snapshot trustedLocalSnapshot) string {
 	if strings.TrimSpace(path) == "" || !isGitRepo(path) {
 		return "-"
@@ -357,16 +349,4 @@ func normalizeStatusManifest(manifest Manifest) Manifest {
 	sortEntries(manifest.External)
 	sortManagedWorktrees(manifest.ManagedWorktrees)
 	return manifest
-}
-
-func loadStatusManifest(primaryRoot string) (Manifest, error) {
-	workspaceManifest, err := loadWorkspaceManifest(primaryRoot)
-	if err != nil {
-		return Manifest{}, err
-	}
-	cache, err := loadWorkspaceCache(primaryRoot)
-	if err != nil {
-		return Manifest{}, err
-	}
-	return normalizeStatusManifest(runtimeManifestFromWorkspace(primaryRoot, workspaceManifest, cache)), nil
 }

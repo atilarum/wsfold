@@ -200,17 +200,6 @@ func (a *App) completeWorktreeSources(cwd string, prefix string) ([]CompletionCa
 	return filtered, nil
 }
 
-func trustedLocalCompletionCandidates(cwd string, root string, runner Runner) ([]CompletionCandidate, error) {
-	repos, err := discoverCompletionRepos(root, TrustClassTrusted, runner)
-	if err != nil {
-		return nil, err
-	}
-	repos = filterPrimaryRepos(repos)
-	candidates := completionCandidatesFromRepos(repos, attachedCheckoutPaths(cwd), "")
-	enrichCandidateRealizations(cwd, candidates)
-	return candidates, nil
-}
-
 func (a *App) trustedCompletionContext(cwd string, cfg Config) (Manifest, trustedLocalSnapshot, bool, error) {
 	primaryRoot, err := resolveWorkspaceRoot(cwd)
 	if err != nil {
@@ -348,49 +337,6 @@ func filterPrimaryRepos(repos []Repo) []Repo {
 	return filtered
 }
 
-func managedWorktreeCompletionCandidates(cwd string, disabled bool, prefix string) []CompletionCandidate {
-	primaryRoot, err := resolveWorkspaceRoot(cwd)
-	if err != nil {
-		return nil
-	}
-	manifest, err := loadManifest(primaryRoot)
-	if err != nil {
-		return nil
-	}
-	candidates := make([]CompletionCandidate, 0, len(manifest.ManagedWorktrees))
-	for _, entry := range manifest.ManagedWorktrees {
-		if entry.UnsupportedLegacy {
-			continue
-		}
-		if prefix != "" && !strings.HasPrefix(strings.ToLower(entry.RepoRef), strings.ToLower(prefix)) {
-			continue
-		}
-		realization := InspectManagedWorktreeStatusRealization(manifest, entry)
-		entryDisabled := disabled
-		if realization.Status == RealizationUnmounted {
-			entryDisabled = false
-		}
-		if realization.Status == RealizationInvalid {
-			entryDisabled = true
-		}
-		candidates = append(candidates, CompletionCandidate{
-			Key:         entry.Key(),
-			Value:       entry.RepoRef,
-			Description: completionDescription(entry.PrimaryRepoRef, entry.WorkspacePath),
-			Attached:    true,
-			Disabled:    entryDisabled,
-			Realization: realization.Status,
-			TrustClass:  TrustClassTrusted,
-			Name:        completionFolderName(entry.WorkspacePath),
-			Slug:        slugFromRepoRef(entry.PrimaryRepoRef),
-			Branch:      entry.Branch,
-			IsWorktree:  true,
-			Source:      CompletionSourceLocal,
-		})
-	}
-	return candidates
-}
-
 func managedWorktreeCompletionCandidatesFromManifest(manifest Manifest, disabled bool, prefix string) []CompletionCandidate {
 	candidates := make([]CompletionCandidate, 0, len(manifest.ManagedWorktrees))
 	for _, entry := range manifest.ManagedWorktrees {
@@ -420,49 +366,6 @@ func managedWorktreeCompletionCandidatesFromManifest(manifest Manifest, disabled
 			Slug:        slugFromRepoRef(entry.PrimaryRepoRef),
 			Branch:      entry.Branch,
 			IsWorktree:  true,
-			Source:      CompletionSourceLocal,
-		})
-	}
-	return candidates
-}
-
-func declaredTrustedCompletionCandidates(cwd string, prefix string) []CompletionCandidate {
-	primaryRoot, err := resolveWorkspaceRoot(cwd)
-	if err != nil {
-		return nil
-	}
-	manifest, err := loadManifest(primaryRoot)
-	if err != nil {
-		return nil
-	}
-	candidates := make([]CompletionCandidate, 0, len(manifest.Trusted))
-	for _, entry := range manifest.Trusted {
-		if strings.TrimSpace(entry.ResolutionDetail) == "" && isGitRepo(entry.CheckoutPath) {
-			continue
-		}
-		repo := hydrateManifestRepo(entry, Runner{})
-		value := completionFolderName(entry.CheckoutPath)
-		if strings.TrimSpace(repo.Slug) != "" {
-			value = repo.DisplayRef()
-		} else if strings.TrimSpace(entry.RepoRef) != "" {
-			value = entry.RepoRef
-		}
-		if prefix != "" && !strings.HasPrefix(strings.ToLower(value), strings.ToLower(prefix)) {
-			continue
-		}
-		realization := InspectAttachmentRealization(entry)
-		candidates = append(candidates, CompletionCandidate{
-			Key:         entry.Key(),
-			Value:       value,
-			Description: completionDescription(entry.RepoRef, entry.CheckoutPath),
-			Attached:    true,
-			Disabled:    realization.Status == RealizationInvalid,
-			Realization: realization.Status,
-			TrustClass:  TrustClassTrusted,
-			Name:        completionFolderName(entry.MountPath),
-			Slug:        repo.Slug,
-			Branch:      repo.Branch,
-			IsWorktree:  false,
 			Source:      CompletionSourceLocal,
 		})
 	}
