@@ -1,11 +1,13 @@
 package worktree
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/atilarum/wsfold/internal/cli"
 	"github.com/atilarum/wsfold/internal/testutil"
 	"github.com/atilarum/wsfold/internal/wsfold"
 )
@@ -51,6 +53,45 @@ func TestWorkspaceLocalWorktreeContract(t *testing.T) {
 	}
 	if branches := h.RunGit(primaryMount, "branch", "--list", "feature/contract"); !strings.Contains(branches, "feature/contract") {
 		t.Fatalf("expected branch to be preserved after dismiss, got %q", branches)
+	}
+}
+
+func TestDismissManagedWorktreeFullRefWhenPrimaryNameIsAmbiguous(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	primaryCheckout := filepath.Join(h.TrustedRoot, "math")
+	otherCheckout := filepath.Join(h.TrustedRoot, "math-app")
+	h.InitRepo(primaryCheckout)
+	h.RunGit(primaryCheckout, "remote", "add", "origin", "https://github.com/atilarum/math.git")
+	h.RunGit(primaryCheckout, "branch", "new-wt")
+	h.InitRepo(otherCheckout)
+	h.RunGit(otherCheckout, "remote", "add", "origin", "https://github.com/mikhail-yaskou/math.git")
+
+	app := wsfold.NewApp()
+	app.Runner = wsfold.Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Summon(h.Workspace, "atilarum/math"); err != nil {
+		t.Fatalf("Summon primary returned error: %v", err)
+	}
+	if err := app.Summon(h.Workspace, "math-app"); err != nil {
+		t.Fatalf("Summon similarly named repo returned error: %v", err)
+	}
+	if err := app.Worktree(h.Workspace, "atilarum/math", "new-wt", wsfold.WorktreeOptions{}); err != nil {
+		t.Fatalf("Worktree returned error: %v", err)
+	}
+
+	t.Chdir(h.Workspace)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if err := cli.Run([]string{"dismiss", "atilarum/math/new-wt"}, &stdout, &stderr); err != nil {
+		t.Fatalf("cli dismiss returned error: %v\nstderr: %s", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Managed worktree removed:") || !strings.Contains(stdout.String(), "atilarum/math/new-wt") {
+		t.Fatalf("expected managed worktree removal output, got:\n%s", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(h.Workspace, "math-new-wt")); !os.IsNotExist(err) {
+		t.Fatalf("expected managed worktree directory removal, got %v", err)
 	}
 }
 

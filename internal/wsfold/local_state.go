@@ -67,13 +67,17 @@ func (a *App) ensureLocalState(primaryRoot string, scope localStateScope) (*comm
 		if err != nil {
 			return nil, err
 		}
-		targetRepo, found, err := a.resolveTargetedTrustedRepo(cfg, manifest, snapshot, scope.ref)
+		targetRef, err := targetedTrustedRepoRef(manifest, scope.ref)
+		if err != nil {
+			return nil, err
+		}
+		targetRepo, found, err := a.resolveTargetedTrustedRepo(cfg, manifest, snapshot, targetRef)
 		if err != nil {
 			return nil, err
 		}
 		if found {
 			snapshot = snapshotWithTrustedRepo(snapshot, targetRepo)
-			healTrustedManifestEntriesForRef(&manifest, cfg, snapshot, scope.ref)
+			healTrustedManifestEntriesForRef(&manifest, cfg, snapshot, targetRef)
 		}
 		healExternalManifestEntries(&manifest, cfg, a.Runner, scope.ref)
 		refreshManagedWorktreePrimaryFields(&manifest)
@@ -104,6 +108,18 @@ func (a *App) ensureLocalState(primaryRoot string, scope localStateScope) (*comm
 		local:       snapshot,
 	}
 	return a.commandState, nil
+}
+
+func targetedTrustedRepoRef(manifest Manifest, ref string) (string, error) {
+	if worktree, ok, err := resolveManagedWorktreeEntry(manifest, ref); err != nil {
+		return "", err
+	} else if ok {
+		return worktree.PrimaryRepoRef, nil
+	}
+	if owner, name, _, ok := splitSlugWithBranch(ref); ok {
+		return owner + "/" + name, nil
+	}
+	return ref, nil
 }
 
 func (a *App) resolveTargetedTrustedRepo(cfg Config, manifest Manifest, snapshot trustedLocalSnapshot, ref string) (Repo, bool, error) {

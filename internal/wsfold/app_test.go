@@ -1548,6 +1548,47 @@ func TestDismissManagedWorktreeRemovesDirectoryAndPreservesBranch(t *testing.T) 
 	}
 }
 
+func TestDismissManagedWorktreeWithAmbiguousPrimaryShortName(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	primary := filepath.Join(h.TrustedRoot, "math")
+	other := filepath.Join(h.TrustedRoot, "math-app")
+	h.InitRepo(primary)
+	h.RunGit(primary, "remote", "add", "origin", "https://github.com/atilarum/math.git")
+	h.RunGit(primary, "branch", "new-wt")
+	h.InitRepo(other)
+	h.RunGit(other, "remote", "add", "origin", "https://github.com/mikhail-yaskou/math.git")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+
+	if err := app.Summon(h.Workspace, "atilarum/math"); err != nil {
+		t.Fatalf("Summon primary returned error: %v", err)
+	}
+	if err := app.Summon(h.Workspace, "math-app"); err != nil {
+		t.Fatalf("Summon similarly named repo returned error: %v", err)
+	}
+	if err := app.Worktree(h.Workspace, "atilarum/math", "new-wt", WorktreeOptions{}); err != nil {
+		t.Fatalf("Worktree returned error: %v", err)
+	}
+
+	worktreePath := filepath.Join(h.Workspace, "math-new-wt")
+	if err := app.Dismiss(h.Workspace, "atilarum/math/new-wt"); err != nil {
+		t.Fatalf("Dismiss managed worktree returned error: %v", err)
+	}
+	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+		t.Fatalf("expected managed worktree directory removal, got %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(h.Workspace, "math")); err != nil {
+		t.Fatalf("primary attachment should remain: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(h.Workspace, "math-app")); err != nil {
+		t.Fatalf("similarly named attachment should remain: %v", err)
+	}
+}
+
 func TestDismissManagedWorktreeRefusesDirtyBranchlessAndUnavailablePrimary(t *testing.T) {
 	for name, mutate := range map[string]func(t *testing.T, h *testutil.Harness, worktreePath string){
 		"dirty": func(t *testing.T, h *testutil.Harness, worktreePath string) {
