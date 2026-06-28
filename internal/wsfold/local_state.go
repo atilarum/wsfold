@@ -118,9 +118,6 @@ func targetedTrustedRepoRef(manifest Manifest, ref string) (string, error) {
 	} else if ok {
 		return worktree.PrimaryRepoRef, nil
 	}
-	if owner, name, _, ok := splitSlugWithBranch(ref); ok {
-		return owner + "/" + name, nil
-	}
 	return ref, nil
 }
 
