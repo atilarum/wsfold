@@ -193,12 +193,7 @@ func TestRuntimeManifestSkipsLocalDiscoveryWhenCacheHasCheckoutPaths(t *testing.
 			},
 		},
 	}
-	runner := Runner{ExecCommand: func(name string, dir string, env []string, args ...string) (string, error) {
-		t.Fatalf("runtime manifest should not run %s in %s for full cache hits", name, dir)
-		return "", nil
-	}}
-
-	manifest := runtimeManifestFromWorkspace(root, workspaceManifest, cache, runner)
+	manifest := runtimeManifestFromWorkspace(root, workspaceManifest, cache)
 	if got := manifest.Trusted[0].CheckoutPath; got != "/cached/trusted/service" {
 		t.Fatalf("trusted checkout_path = %q, want cached path", got)
 	}
@@ -213,17 +208,13 @@ func TestRuntimeManifestSkipsLocalDiscoveryWhenCacheHasCheckoutPaths(t *testing.
 	}
 }
 
-func TestRuntimeManifestMissingCacheUsesTargetedLocalResolution(t *testing.T) {
+func TestRuntimeManifestMissingCacheStaysUnresolvedAndPure(t *testing.T) {
 	root := t.TempDir()
 	trustedRoot := filepath.Join(root, "trusted-root")
 	externalRoot := filepath.Join(root, "external-root")
 	servicePath := filepath.Join(trustedRoot, "service")
-	nestedPath := filepath.Join(trustedRoot, "deep", "nested")
 	if err := os.MkdirAll(filepath.Join(servicePath, ".git"), 0o755); err != nil {
 		t.Fatalf("mkdir service repo: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Join(nestedPath, ".git"), 0o755); err != nil {
-		t.Fatalf("mkdir nested repo: %v", err)
 	}
 	if err := os.MkdirAll(externalRoot, 0o755); err != nil {
 		t.Fatalf("mkdir external root: %v", err)
@@ -238,33 +229,20 @@ func TestRuntimeManifestMissingCacheUsesTargetedLocalResolution(t *testing.T) {
 		},
 	}
 	cache := WorkspaceCache{SchemaVersion: manifestVersion}
-	runner := Runner{ExecCommand: func(name string, dir string, env []string, args ...string) (string, error) {
-		if filepath.Clean(dir) == filepath.Clean(nestedPath) {
-			t.Fatalf("targeted cache recovery should not hydrate nested repo %s", dir)
-		}
-		switch strings.Join(args, " ") {
-		case "branch --show-current":
-			return "main", nil
-		case "remote get-url origin":
-			return "https://github.com/acme/service.git", nil
-		default:
-			return "", nil
-		}
-	}}
 
-	manifest := runtimeManifestFromWorkspace(root, workspaceManifest, cache, runner)
-	if got := manifest.Trusted[0].CheckoutPath; got != servicePath {
-		t.Fatalf("trusted checkout_path = %q, want %q", got, servicePath)
+	manifest := runtimeManifestFromWorkspace(root, workspaceManifest, cache)
+	if got := manifest.Trusted[0].CheckoutPath; got != "" {
+		t.Fatalf("trusted checkout_path = %q, want empty", got)
 	}
-	if !manifest.Trusted[0].CacheInferred {
-		t.Fatalf("expected missing cache to be inferred from targeted local resolution")
+	if manifest.Trusted[0].CacheInferred {
+		t.Fatalf("runtime manifest should not infer missing cache rows")
 	}
 	if got := manifest.Trusted[0].ResolutionDetail; got != "" {
 		t.Fatalf("trusted resolution detail = %q, want empty", got)
 	}
 }
 
-func TestRuntimeManifestReportsLocalDiscoveryErrorOnMissingCache(t *testing.T) {
+func TestRuntimeManifestDoesNotDiagnoseMissingCache(t *testing.T) {
 	root := t.TempDir()
 	missingTrustedRoot := filepath.Join(root, "missing-trusted-root")
 	externalRoot := filepath.Join(root, "external-root")
@@ -282,18 +260,15 @@ func TestRuntimeManifestReportsLocalDiscoveryErrorOnMissingCache(t *testing.T) {
 	}
 	cache := WorkspaceCache{SchemaVersion: manifestVersion}
 
-	manifest := runtimeManifestFromWorkspace(root, workspaceManifest, cache, Runner{})
+	manifest := runtimeManifestFromWorkspace(root, workspaceManifest, cache)
 	if len(manifest.Trusted) != 1 {
 		t.Fatalf("expected one trusted entry, got %d", len(manifest.Trusted))
 	}
-	detail := manifest.Trusted[0].ResolutionDetail
-	for _, snippet := range []string{
-		"cache missing for acme/service",
-		"read " + missingTrustedRoot,
-	} {
-		if !strings.Contains(detail, snippet) {
-			t.Fatalf("resolution detail missing %q:\n%s", snippet, detail)
-		}
+	if got := manifest.Trusted[0].CheckoutPath; got != "" {
+		t.Fatalf("trusted checkout_path = %q, want empty", got)
+	}
+	if got := manifest.Trusted[0].ResolutionDetail; got != "" {
+		t.Fatalf("resolution detail = %q, want empty", got)
 	}
 }
 

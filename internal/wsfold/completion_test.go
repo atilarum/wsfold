@@ -365,6 +365,51 @@ func TestCompleteSummonRemainsLocalOnly(t *testing.T) {
 	}
 }
 
+func TestCompleteTrustedWarmDiscoveryUsesNoGit(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setCompletionEnv(t, h)
+	initWorkspace(t, h)
+
+	trustedRepo := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(trustedRepo)
+	h.RunGit(trustedRepo, "remote", "add", "origin", "https://github.com/acme/service.git")
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("Summon returned error: %v", err)
+	}
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig returned error: %v", err)
+	}
+	if _, _, err := refreshTrustedLocalCache(cfg, app.Runner); err != nil {
+		t.Fatalf("warm trusted-local cache: %v", err)
+	}
+
+	noGit := NewApp()
+	noGit.Runner = Runner{ExecCommand: func(name string, dir string, env []string, args ...string) (string, error) {
+		if name == "git" {
+			t.Fatalf("warm completion should not run git in %s with %v", dir, args)
+		}
+		return "", nil
+	}}
+	candidates, err := noGit.Complete(h.Workspace, "summon", "")
+	if err != nil {
+		t.Fatalf("Complete summon returned error: %v", err)
+	}
+	if len(candidates) != 1 || candidates[0].Value != "service" || !candidates[0].Attached {
+		t.Fatalf("unexpected summon candidates: %#v", candidates)
+	}
+	candidates, err = noGit.Complete(h.Workspace, "dismiss", "")
+	if err != nil {
+		t.Fatalf("Complete dismiss returned error: %v", err)
+	}
+	if len(candidates) != 1 || candidates[0].Value != "service" || !candidates[0].Attached {
+		t.Fatalf("unexpected dismiss candidates: %#v", candidates)
+	}
+}
+
 func setCompletionEnv(t *testing.T, h *testutil.Harness) {
 	t.Helper()
 	for _, env := range h.Env() {

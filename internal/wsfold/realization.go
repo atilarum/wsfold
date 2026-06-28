@@ -185,6 +185,34 @@ func InspectManagedWorktreeRealization(manifest Manifest, entry ManagedWorktreeE
 	return result
 }
 
+func InspectManagedWorktreeStatusRealization(manifest Manifest, entry ManagedWorktreeEntry) ManagedWorktreeRealization {
+	inspection := InspectManagedWorktreeShallow(manifest, entry)
+	result := ManagedWorktreeRealization{
+		Entry:      entry,
+		Inspection: inspection,
+		Reason:     inspection.Reason,
+	}
+	switch inspection.State {
+	case ManagedWorktreeHealthy:
+		result.Status = RealizationAttached
+	case ManagedWorktreeMissing:
+		result.Status = RealizationUnmounted
+	case ManagedWorktreePrimaryUnavailable:
+		if inspection.PrimaryEntry.MountPath != "" {
+			primary := InspectAttachmentRealization(inspection.PrimaryEntry)
+			if primary.Status == RealizationUnmounted {
+				result.Status = RealizationUnmounted
+				result.Reason = "primary repository attachment is unmounted"
+				return result
+			}
+		}
+		result.Status = RealizationInvalid
+	default:
+		result.Status = RealizationInvalid
+	}
+	return result
+}
+
 func isExpectedNativeBindMount(info mountPointInfo, entry Entry) bool {
 	source := strings.TrimSpace(info.Source)
 	if strings.TrimSpace(entry.CheckoutPath) == "" {

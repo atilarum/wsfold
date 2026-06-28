@@ -54,7 +54,7 @@ first when you want read-only diagnostics. FUSE rows reported as `unmounted` are
 wsfold summon-all
 ```
 
-to restore every recoverable declared attachment and dependent managed worktree. Use `wsfold summon <repo-ref>` to recover one item. Recovery uses the backend recorded in `.wsfold/cache.yaml` while that cache row exists, not the current `WSFOLD_MOUNT_BACKEND` value. If the cache is deleted, recovery resolves the repository again and uses the current backend policy, which may record a different concrete backend. `wsfold status` remains read-only and does not run auto eligibility or recreate cache. Rows reported as `invalid` need manual inspection before retrying because WSFold cannot prove that automatic cleanup is safe.
+to restore every recoverable declared attachment and dependent managed worktree. Use `wsfold summon <repo-ref>` to recover one item. Recovery uses the backend recorded in `.wsfold/cache.yaml` while that cache row exists, not the current `WSFOLD_MOUNT_BACKEND` value. If the cache is deleted, recovery resolves the repository again and uses the current backend policy, which may record a different concrete backend. `wsfold status` remains read-only for workspace state: it does not run auto eligibility or recreate `.wsfold/cache.yaml`, though it may refresh the user-level trusted-local discovery cache. Rows reported as `invalid` need manual inspection before retrying because WSFold cannot prove that automatic cleanup is safe.
 
 ## Docker and Devcontainers
 

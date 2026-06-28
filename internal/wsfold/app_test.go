@@ -518,6 +518,13 @@ func TestStatusDoesNotRunAutoEligibilityOrWriteCache(t *testing.T) {
 	if _, err := os.Stat(cachePath(h.Workspace)); !os.IsNotExist(err) {
 		t.Fatalf("status must not recreate cache, stat err: %v", err)
 	}
+	localCachePath, err := trustedLocalCachePath()
+	if err != nil {
+		t.Fatalf("trustedLocalCachePath returned error: %v", err)
+	}
+	if _, err := os.Stat(localCachePath); err != nil {
+		t.Fatalf("status should warm trusted-local discovery cache: %v", err)
+	}
 }
 
 func TestSummonReplacesWrongDeclaredSymlinkTarget(t *testing.T) {

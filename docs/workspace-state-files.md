@@ -4,6 +4,13 @@ Commit `wsfold.yaml`. It is the portable workspace intent file: trusted reposito
 
 Do not commit `.wsfold/cache.yaml`. WSFold adds it to `.gitignore` during `wsfold init`. The cache records machine-local resolution state such as source checkout paths and the concrete trusted backend actually used for each attachment. It does not store `auto` or global capability state. If the cache exists, WSFold uses those cached checkout paths and backend values for recovery even when `WSFOLD_MOUNT_BACKEND` has changed. If the cache is deleted, `wsfold status` remains read-only and does not recreate it; `wsfold summon` or `wsfold summon-all` can rebuild cache entries after a successful unique local resolution and realization, possibly selecting a different concrete backend under the current policy. If multiple local checkouts match the same declared ref, inspect the candidates and summon with a more specific ref.
 
+WSFold also uses disposable user-level discovery caches outside the workspace. With `XDG_CACHE_HOME` set, paths start with `$XDG_CACHE_HOME/wsfold`; otherwise they start with the operating system user cache directory, for example `~/Library/Caches/wsfold` on macOS.
+
+- Local trusted checkout cache: `trusted-local/index.json`. It indexes direct trusted checkouts under `WSFOLD_TRUSTED_DIR` so status, completion, and picker startup can avoid repeated Git probes.
+- Trusted GitHub remote cache: `trusted-github/<org>.json`. It stores repository lists for `WSFOLD_TRUSTED_GITHUB_ORGS`; `wsfold reindex` refreshes it, and entries older than 24 hours are stale.
+
+Read-only commands may refresh these discovery caches, but `wsfold.yaml` and `.wsfold/cache.yaml` remain the workspace source of truth.
+
 WSFold also keeps trusted attachment folders and WSFold-managed worktree folders out of the primary repository's Git status by writing a visible managed block to the primary `.gitignore`:
 
 ```gitignore

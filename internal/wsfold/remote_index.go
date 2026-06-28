@@ -201,6 +201,14 @@ func saveTrustedOrgCache(cache trustedOrgCache) error {
 }
 
 func trustedRemoteCachePath(org string) (string, error) {
+	root, err := wsfoldUserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "trusted-github", strings.ToLower(org)+".json"), nil
+}
+
+func wsfoldUserCacheDir() (string, error) {
 	root := strings.TrimSpace(os.Getenv("XDG_CACHE_HOME"))
 	if root == "" {
 		var err error
@@ -209,7 +217,7 @@ func trustedRemoteCachePath(org string) (string, error) {
 			return "", fmt.Errorf("resolve user cache dir: %w", err)
 		}
 	}
-	return filepath.Join(root, "wsfold", "trusted-github", strings.ToLower(org)+".json"), nil
+	return filepath.Join(root, "wsfold"), nil
 }
 
 func trustedRemoteCachesNeedRefresh(orgs []string, caches []trustedOrgCache, now time.Time) bool {

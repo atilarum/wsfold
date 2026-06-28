@@ -186,8 +186,11 @@ func TestStatusProjectionReportsDirtyManagedWorktreeAsAttached(t *testing.T) {
 	if row.State != RealizationAttached || row.Action != "-" {
 		t.Fatalf("dirty managed worktree should be status-attached, got %#v", row)
 	}
-	if !strings.Contains(row.Detail, "has local changes") {
-		t.Fatalf("dirty attached row should retain diagnostic detail, got %q", row.Detail)
+	if strings.Contains(row.Detail, "has local changes") {
+		t.Fatalf("status should not run dirty-worktree validation, got %q", row.Detail)
+	}
+	if !strings.Contains(row.Detail, "branch feature/dirty") {
+		t.Fatalf("status should retain branch detail from manifest, got %q", row.Detail)
 	}
 }
 

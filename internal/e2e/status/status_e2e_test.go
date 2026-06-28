@@ -121,6 +121,52 @@ func TestStatusCommandContractIsReadOnly(t *testing.T) {
 	}
 }
 
+func TestStatusCommandWarmTrustedLocalCacheUsesNoGit(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	repoPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(repoPath)
+	h.RunGit(repoPath, "remote", "add", "origin", "https://github.com/acme/service.git")
+
+	app := wsfold.NewApp()
+	app.Runner = wsfold.Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("Summon returned error: %v", err)
+	}
+
+	t.Chdir(h.Workspace)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if err := cli.Run([]string{"status"}, &stdout, &stderr); err != nil {
+		t.Fatalf("cold status command returned error: %v\nstderr: %s", err, stderr.String())
+	}
+	localCachePath := filepath.Join(h.Root, "cache", "wsfold", "trusted-local", "index.json")
+	if _, err := os.Stat(localCachePath); err != nil {
+		t.Fatalf("cold status should write trusted-local cache: %v", err)
+	}
+
+	gitLog := filepath.Join(h.Root, "git.log")
+	fakeGit := h.WriteExecutable("git", `#!/bin/sh
+printf '%s %s\n' "$PWD" "$*" >> "$WSFOLD_GIT_LOG"
+exit 1
+`)
+	t.Setenv("WSFOLD_GIT_LOG", gitLog)
+	t.Setenv("PATH", filepath.Dir(fakeGit)+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := cli.Run([]string{"status"}, &stdout, &stderr); err != nil {
+		t.Fatalf("warm status command returned error: %v\nstderr: %s", err, stderr.String())
+	}
+	if logBytes, err := os.ReadFile(gitLog); err == nil && len(logBytes) > 0 {
+		t.Fatalf("warm status should not run git, log:\n%s", string(logBytes))
+	} else if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read git log: %v", err)
+	}
+}
+
 func setEnv(t *testing.T, h *testutil.Harness) {
 	t.Helper()
 	for _, entry := range append(h.Env(), "WSFOLD_PROJECTS_DIR=.", "WSFOLD_MOUNT_BACKEND=symlink") {

@@ -45,18 +45,20 @@ type StatusRow struct {
 }
 
 func (a *App) Status(cwd string) (StatusReport, error) {
+	defer a.beginCommand()()
 	primaryRoot, err := resolveWorkspaceRoot(cwd)
 	if err != nil {
 		return StatusReport{}, err
 	}
-	manifest, err := loadStatusManifest(primaryRoot)
+	state, err := a.ensureLocalState(primaryRoot, fullLocalStateScope())
 	if err != nil {
 		return StatusReport{}, err
 	}
+	manifest := normalizeStatusManifest(state.manifest)
 
 	rows := make([]StatusRow, 0, len(manifest.Trusted)+len(manifest.External)+len(manifest.ManagedWorktrees))
 	for _, entry := range manifest.Trusted {
-		rows = append(rows, statusTrustedRow(entry, a.Runner))
+		rows = append(rows, statusTrustedRowWithSnapshot(entry, a.Runner, state.local))
 	}
 	for _, entry := range manifest.External {
 		rows = append(rows, statusExternalRow(entry, a.Runner))
@@ -74,12 +76,16 @@ func (a *App) Status(cwd string) (StatusReport, error) {
 }
 
 func statusTrustedRow(entry Entry, runner Runner) StatusRow {
+	return statusTrustedRowWithSnapshot(entry, runner, trustedLocalSnapshot{})
+}
+
+func statusTrustedRowWithSnapshot(entry Entry, runner Runner, snapshot trustedLocalSnapshot) StatusRow {
 	row := StatusRow{
 		Ref:          statusRef(entry.RepoRef, filepath.Base(entry.CheckoutPath), entry.CheckoutPath),
 		Folder:       statusFolder(entry.MountPath, entry.CheckoutPath),
 		Kind:         StatusKindTrusted,
 		Backend:      entry.Backend,
-		Branch:       statusBranch(runner, entry.CheckoutPath),
+		Branch:       statusBranchWithSnapshot(runner, entry.CheckoutPath, snapshot),
 		CheckoutPath: entry.CheckoutPath,
 		MountPath:    entry.MountPath,
 		Action:       "inspect manually",
@@ -229,13 +235,8 @@ func statusManagedWorktreeRow(manifest Manifest, entry ManagedWorktreeEntry, run
 	entry.WorkspacePath = filepath.Clean(entry.WorkspacePath)
 	entry.PrimaryMountPath = filepath.Clean(entry.PrimaryMountPath)
 
-	realization := InspectManagedWorktreeRealization(manifest, entry, runner)
-	if isAttachedDirtyManagedWorktree(realization) {
-		row.State = RealizationAttached
-		row.Detail = fmt.Sprintf("branch %s, primary %s, has local changes", entry.Branch, entry.PrimaryRepoRef)
-		row.Action = "-"
-		return row
-	}
+	_ = runner
+	realization := InspectManagedWorktreeStatusRealization(manifest, entry)
 	row.State = realization.Status
 	row.Detail = statusWorktreeDetail(entry, realization)
 	if realization.Status == RealizationUnmounted {
@@ -303,8 +304,15 @@ func statusFolder(paths ...string) string {
 }
 
 func statusBranch(runner Runner, path string) string {
+	return statusBranchWithSnapshot(runner, path, trustedLocalSnapshot{})
+}
+
+func statusBranchWithSnapshot(runner Runner, path string, snapshot trustedLocalSnapshot) string {
 	if strings.TrimSpace(path) == "" || !isGitRepo(path) {
 		return "-"
+	}
+	if repo, ok := snapshot.repoByCheckoutPath(path); ok && strings.TrimSpace(repo.Branch) != "" {
+		return repo.Branch
 	}
 	branch := repoBranch(runner, path)
 	if strings.TrimSpace(branch) == "" {
@@ -313,17 +321,8 @@ func statusBranch(runner Runner, path string) string {
 	return branch
 }
 
-func loadStatusManifest(primaryRoot string) (Manifest, error) {
-	workspaceManifest, err := loadWorkspaceManifest(primaryRoot)
-	if err != nil {
-		return Manifest{}, err
-	}
-	cache, err := loadWorkspaceCache(primaryRoot)
-	if err != nil {
-		return Manifest{}, err
-	}
-	manifest := runtimeManifestFromWorkspace(primaryRoot, workspaceManifest, cache, Runner{})
-
+func normalizeStatusManifest(manifest Manifest) Manifest {
+	manifest = cloneManifest(manifest)
 	for i := range manifest.Trusted {
 		entry := &manifest.Trusted[i]
 		if entry.Backend == "" {
@@ -357,5 +356,17 @@ func loadStatusManifest(primaryRoot string) (Manifest, error) {
 	sortEntries(manifest.Trusted)
 	sortEntries(manifest.External)
 	sortManagedWorktrees(manifest.ManagedWorktrees)
-	return manifest, nil
+	return manifest
+}
+
+func loadStatusManifest(primaryRoot string) (Manifest, error) {
+	workspaceManifest, err := loadWorkspaceManifest(primaryRoot)
+	if err != nil {
+		return Manifest{}, err
+	}
+	cache, err := loadWorkspaceCache(primaryRoot)
+	if err != nil {
+		return Manifest{}, err
+	}
+	return normalizeStatusManifest(runtimeManifestFromWorkspace(primaryRoot, workspaceManifest, cache)), nil
 }
