@@ -22,11 +22,12 @@ const (
 )
 
 type App struct {
-	Runner          Runner
-	Stdout          io.Writer
-	Stderr          io.Writer
-	backendSelector *trustedBackendSelector
-	commandState    *commandState
+	Runner                            Runner
+	Stdout                            io.Writer
+	Stderr                            io.Writer
+	backendSelector                   *trustedBackendSelector
+	commandState                      *commandState
+	skipTrustedLocalCacheWriteThrough bool
 }
 
 type WorktreeOptions struct {
@@ -45,11 +46,14 @@ func NewApp() *App {
 func (a *App) beginCommand() func() {
 	previous := a.backendSelector
 	previousState := a.commandState
+	previousSkipTrustedLocalCacheWriteThrough := a.skipTrustedLocalCacheWriteThrough
 	a.backendSelector = newTrustedBackendSelector(a.Runner)
 	a.commandState = nil
+	a.skipTrustedLocalCacheWriteThrough = false
 	return func() {
 		a.backendSelector = previous
 		a.commandState = previousState
+		a.skipTrustedLocalCacheWriteThrough = previousSkipTrustedLocalCacheWriteThrough
 	}
 }
 
@@ -79,6 +83,7 @@ func (a *App) SummonAll(cwd string) error {
 	if err != nil {
 		return err
 	}
+	a.skipTrustedLocalCacheWriteThrough = true
 	manifest := state.manifest
 	if len(manifest.Trusted) == 0 && len(manifest.External) == 0 && len(manifest.ManagedWorktrees) == 0 {
 		if err := a.reconcileTrustedAgentAccess(primaryRoot, nil); err != nil {
@@ -661,6 +666,9 @@ func (a *App) persistTrustedCacheResolution(primaryRoot string, manifest Manifes
 	manifest.Upsert(entry)
 	if err := saveManifest(primaryRoot, manifest); err != nil {
 		return err
+	}
+	if a.skipTrustedLocalCacheWriteThrough {
+		return nil
 	}
 	cfg, err := LoadConfig()
 	if err != nil {

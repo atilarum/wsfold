@@ -64,7 +64,7 @@ func (a *App) Status(cwd string) (StatusReport, error) {
 		rows = append(rows, statusExternalRow(entry, a.Runner))
 	}
 	for _, entry := range manifest.ManagedWorktrees {
-		rows = append(rows, statusManagedWorktreeRow(manifest, entry, a.Runner))
+		rows = append(rows, statusManagedWorktreeRow(manifest, entry))
 	}
 
 	report := StatusReport{
@@ -178,7 +178,7 @@ func statusExternalRow(entry Entry, runner Runner) StatusRow {
 	return row
 }
 
-func statusManagedWorktreeRow(manifest Manifest, entry ManagedWorktreeEntry, runner Runner) StatusRow {
+func statusManagedWorktreeRow(manifest Manifest, entry ManagedWorktreeEntry) StatusRow {
 	row := StatusRow{
 		Ref:                 statusRef(entry.RepoRef, filepath.Base(entry.WorkspacePath), entry.WorkspacePath),
 		Folder:              statusFolder(entry.WorkspacePath),
@@ -231,7 +231,6 @@ func statusManagedWorktreeRow(manifest Manifest, entry ManagedWorktreeEntry, run
 	entry.WorkspacePath = filepath.Clean(entry.WorkspacePath)
 	entry.PrimaryMountPath = filepath.Clean(entry.PrimaryMountPath)
 
-	_ = runner
 	realization := InspectManagedWorktreeStatusRealization(manifest, entry)
 	row.State = realization.Status
 	row.Detail = statusWorktreeDetail(entry, realization)

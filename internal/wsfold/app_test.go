@@ -2,11 +2,13 @@ package wsfold
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/atilarum/wsfold/internal/testutil"
 )
@@ -643,6 +645,83 @@ func TestSummonAllRecoversIndependentEntriesAndReportsInvalid(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(workerLink, "user.txt")); statErr != nil {
 		t.Fatalf("invalid worker content should be preserved: %v", statErr)
+	}
+}
+
+func TestSummonAllDoesNotRewriteWarmTrustedLocalCachePerRecoveredEntry(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h)
+	initWorkspace(t, h)
+
+	for _, name := range []string{"service", "worker"} {
+		repoPath := filepath.Join(h.TrustedRoot, name)
+		h.InitRepo(repoPath)
+		h.RunGit(repoPath, "remote", "add", "origin", "https://github.com/acme/"+name+".git")
+	}
+
+	app := NewApp()
+	app.Runner = Runner{Env: []string{"GIT_CONFIG_GLOBAL=" + h.GitConfig}}
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("Summon service returned error: %v", err)
+	}
+	if err := app.Summon(h.Workspace, "worker"); err != nil {
+		t.Fatalf("Summon worker returned error: %v", err)
+	}
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig returned error: %v", err)
+	}
+	snapshot, _, err := refreshTrustedLocalCache(cfg, app.Runner)
+	if err != nil {
+		t.Fatalf("refreshTrustedLocalCache returned error: %v", err)
+	}
+	localCachePath, err := trustedLocalCachePath()
+	if err != nil {
+		t.Fatalf("trustedLocalCachePath returned error: %v", err)
+	}
+	payload, err := json.MarshalIndent(trustedLocalCacheFile{
+		SchemaVersion: trustedLocalCacheSchemaVersion,
+		TrustedDir:    filepath.Clean(cfg.TrustedDir),
+		FetchedAt:     time.Date(2000, 1, 2, 3, 4, 5, 0, time.UTC),
+		Entries:       snapshot.Entries,
+	}, "", "  ")
+	if err != nil {
+		t.Fatalf("encode trusted local cache: %v", err)
+	}
+	payload = append(payload, '\n')
+	if err := os.WriteFile(localCachePath, payload, 0o644); err != nil {
+		t.Fatalf("write trusted local cache: %v", err)
+	}
+	before, err := os.ReadFile(localCachePath)
+	if err != nil {
+		t.Fatalf("read trusted local cache before summon-all: %v", err)
+	}
+	if err := os.Remove(cachePath(h.Workspace)); err != nil {
+		t.Fatalf("remove workspace cache: %v", err)
+	}
+
+	if err := app.SummonAll(h.Workspace); err != nil {
+		t.Fatalf("SummonAll returned error: %v", err)
+	}
+	after, err := os.ReadFile(localCachePath)
+	if err != nil {
+		t.Fatalf("read trusted local cache after summon-all: %v", err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatalf("summon-all should not rewrite warm trusted-local cache per recovered entry\nbefore:\n%s\nafter:\n%s", string(before), string(after))
+	}
+	workspaceCache, err := os.ReadFile(cachePath(h.Workspace))
+	if err != nil {
+		t.Fatalf("read workspace cache: %v", err)
+	}
+	for _, snippet := range []string{
+		"ref: acme/service",
+		"ref: acme/worker",
+	} {
+		if !strings.Contains(string(workspaceCache), snippet) {
+			t.Fatalf("workspace cache missing %q:\n%s", snippet, string(workspaceCache))
+		}
 	}
 }
 
