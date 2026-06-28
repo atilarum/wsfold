@@ -284,6 +284,53 @@ external:
 	}
 }
 
+func TestManifestCacheContractSummonAllRestoresMixedTrustedAndExternalCacheRows(t *testing.T) {
+	h := testutil.NewHarness(t)
+	setEnv(t, h, "WSFOLD_PROJECTS_DIR=.", "WSFOLD_MOUNT_BACKEND=symlink")
+	initWorkspace(t, h)
+
+	trustedPath := filepath.Join(h.TrustedRoot, "service")
+	h.InitRepo(trustedPath)
+	h.RunGit(trustedPath, "remote", "add", "origin", "https://github.com/acme/service.git")
+
+	externalPath := filepath.Join(h.ExternalRoot, "tool")
+	h.InitRepo(externalPath)
+	h.RunGit(externalPath, "remote", "add", "origin", "https://github.com/github/tool.git")
+
+	app := testApp(h)
+	if err := app.Summon(h.Workspace, "service"); err != nil {
+		t.Fatalf("Summon returned error: %v", err)
+	}
+	if err := app.SummonUntrusted(h.Workspace, "tool"); err != nil {
+		t.Fatalf("SummonUntrusted returned error: %v", err)
+	}
+
+	cachePath := filepath.Join(h.Workspace, ".wsfold", "cache.yaml")
+	if err := os.Remove(cachePath); err != nil {
+		t.Fatalf("remove cache: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	app.Stdout = &stdout
+	if err := app.SummonAll(h.Workspace); err != nil {
+		t.Fatalf("SummonAll returned error: %v\nstdout: %s", err, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "External repository cache restored:") || !strings.Contains(stdout.String(), "github/tool") {
+		t.Fatalf("SummonAll should restore external cache after trusted reconciliation:\n%s", stdout.String())
+	}
+	cache := mustRead(t, cachePath)
+	for _, snippet := range []string{
+		"ref: acme/service",
+		"checkout_path: " + trustedPath,
+		"ref: github/tool",
+		"checkout_path: " + externalPath,
+	} {
+		if !strings.Contains(cache, snippet) {
+			t.Fatalf("restored mixed cache missing %q:\n%s", snippet, cache)
+		}
+	}
+}
+
 func TestManifestCacheContractSummonAllReportsMissingExternalCacheRows(t *testing.T) {
 	h := testutil.NewHarness(t)
 	setEnv(t, h, "WSFOLD_PROJECTS_DIR=.", "WSFOLD_MOUNT_BACKEND=symlink")

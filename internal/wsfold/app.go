@@ -106,7 +106,7 @@ func (a *App) SummonAll(cwd string) error {
 		case status == RealizationInvalid:
 			invalid++
 		}
-		if current, loadErr := loadManifest(primaryRoot); loadErr == nil {
+		if current, loadErr := reloadSummonAllManifest(primaryRoot, manifest); loadErr == nil {
 			manifest = current
 		}
 		if reconciledEntry, ok := a.trustedEntryForAgentAccessReconcile(manifest, entry, status, err); ok {
@@ -130,7 +130,7 @@ func (a *App) SummonAll(cwd string) error {
 		case status == RealizationInvalid:
 			invalid++
 		}
-		if current, loadErr := loadManifest(primaryRoot); loadErr == nil {
+		if current, loadErr := reloadSummonAllManifest(primaryRoot, manifest); loadErr == nil {
 			manifest = current
 		}
 	}
@@ -147,7 +147,7 @@ func (a *App) SummonAll(cwd string) error {
 		case status == RealizationInvalid:
 			invalid++
 		}
-		if current, loadErr := loadManifest(primaryRoot); loadErr == nil {
+		if current, loadErr := reloadSummonAllManifest(primaryRoot, manifest); loadErr == nil {
 			manifest = current
 		}
 	}
@@ -165,6 +165,40 @@ func (a *App) SummonAll(cwd string) error {
 		return err
 	}
 	return nil
+}
+
+func reloadSummonAllManifest(primaryRoot string, previous Manifest) (Manifest, error) {
+	current, err := loadManifest(primaryRoot)
+	if err != nil {
+		return Manifest{}, err
+	}
+	preserveInMemoryExternalResolutions(&current, previous)
+	refreshManagedWorktreePrimaryFields(&current)
+	sortEntries(current.Trusted)
+	sortEntries(current.External)
+	sortManagedWorktrees(current.ManagedWorktrees)
+	return current, nil
+}
+
+func preserveInMemoryExternalResolutions(current *Manifest, previous Manifest) {
+	previousByRef := map[string]Entry{}
+	for _, entry := range previous.External {
+		if strings.TrimSpace(entry.CheckoutPath) == "" {
+			continue
+		}
+		previousByRef[normalizeRepoRef(entry.RepoRef)] = entry
+	}
+	for i := range current.External {
+		entry := &current.External[i]
+		if strings.TrimSpace(entry.CheckoutPath) != "" {
+			continue
+		}
+		if previousEntry, ok := previousByRef[normalizeRepoRef(entry.RepoRef)]; ok {
+			entry.CheckoutPath = previousEntry.CheckoutPath
+			entry.CacheInferred = previousEntry.CacheInferred
+			entry.ResolutionDetail = previousEntry.ResolutionDetail
+		}
+	}
 }
 
 func (a *App) trustedEntryForAgentAccessReconcile(manifest Manifest, entry Entry, status RealizationStatus, reconcileErr error) (Entry, bool) {
